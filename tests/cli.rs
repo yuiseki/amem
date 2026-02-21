@@ -1,0 +1,649 @@
+use assert_cmd::Command;
+use assert_fs::prelude::*;
+use chrono::Local;
+use predicates::prelude::*;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+fn bin() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_amem"))
+}
+
+fn set_test_home(cmd: &mut Command, home: &std::path::Path) {
+    cmd.env("HOME", home);
+    #[cfg(windows)]
+    {
+        cmd.env("USERPROFILE", home);
+    }
+}
+
+#[test]
+fn init_creates_memory_scaffold() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path()).arg("init");
+    cmd.assert().success();
+
+    tmp.child(".amem/owner/profile.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/owner/personality.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/owner/preferences.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/owner/interests.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/tasks/open.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/tasks/done.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/inbox/captured.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/activity")
+        .assert(predicate::path::is_dir());
+}
+
+#[test]
+fn init_is_idempotent_and_does_not_overwrite_existing_files() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let profile = tmp.child(".amem/owner/profile.md");
+    profile.write_str("name: custom\n").unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path()).arg("init");
+    cmd.assert().success();
+
+    profile.assert("name: custom\n");
+}
+
+#[test]
+fn which_prints_resolved_memory_dir() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let memory = tmp.path().join(".amem-custom");
+
+    let mut cmd = bin();
+    cmd.current_dir(tmp.path())
+        .arg("--memory-dir")
+        .arg(&memory)
+        .arg("which");
+
+    cmd.assert().success().stdout(predicate::str::contains(
+        memory.to_string_lossy().to_string(),
+    ));
+}
+
+#[test]
+fn which_defaults_to_home_dot_amem() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let home = tmp.child("home");
+    home.create_dir_all().unwrap();
+    let work = tmp.child("work");
+    work.create_dir_all().unwrap();
+    let expected = home.path().join(".amem");
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, home.path());
+    cmd.current_dir(work.path()).arg("which");
+    cmd.assert().success().stdout(predicate::str::contains(
+        expected.to_string_lossy().to_string(),
+    ));
+}
+
+#[test]
+fn keep_appends_to_activity_log() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let memory = tmp.path().join(".amem");
+
+    let mut cmd = bin();
+    cmd.current_dir(tmp.path())
+        .arg("--memory-dir")
+        .arg(&memory)
+        .arg("keep")
+        .arg("Went for a walk")
+        .arg("--date")
+        .arg("2026-02-21");
+
+    cmd.assert().success();
+
+    let activity = tmp.child(".amem/activity/2026/02/2026-02-21.md");
+    activity.assert(predicate::path::exists());
+    activity.assert(predicate::str::contains("Went for a walk"));
+}
+
+#[test]
+fn list_and_ls_alias_work() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("# profile\n")
+        .unwrap();
+    tmp.child(".amem/tasks/open.md")
+        .write_str("- task\n")
+        .unwrap();
+
+    let mut list = bin();
+    set_test_home(&mut list, tmp.path());
+    list.current_dir(tmp.path()).arg("list");
+    list.assert()
+        .success()
+        .stdout(predicate::str::contains("owner/profile.md"))
+        .stdout(predicate::str::contains("tasks/open.md"));
+
+    let mut ls = bin();
+    set_test_home(&mut ls, tmp.path());
+    ls.current_dir(tmp.path()).arg("ls");
+    ls.assert()
+        .success()
+        .stdout(predicate::str::contains("owner/profile.md"))
+        .stdout(predicate::str::contains("tasks/open.md"));
+}
+
+#[test]
+fn search_and_remember_alias_work() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/activity/2026/02/2026-02-21.md")
+        .write_str("東京で散歩した\n")
+        .unwrap();
+    tmp.child(".amem/activity/2026/02/2026-02-20.md")
+        .write_str("大阪で会議した\n")
+        .unwrap();
+
+    let mut search = bin();
+    set_test_home(&mut search, tmp.path());
+    search
+        .current_dir(tmp.path())
+        .arg("search")
+        .arg("東京")
+        .arg("--top-k")
+        .arg("1");
+    search
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2026-02-21.md"));
+
+    let mut remember = bin();
+    set_test_home(&mut remember, tmp.path());
+    remember
+        .current_dir(tmp.path())
+        .arg("remember")
+        .arg("東京")
+        .arg("--top-k")
+        .arg("1");
+    remember
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2026-02-21.md"));
+}
+
+#[test]
+fn default_command_runs_today() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yyyy = today.format("%Y").to_string();
+    let mm = today.format("%m").to_string();
+    let ymd = today.format("%Y-%m-%d").to_string();
+
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: yuiseki\n")
+        .unwrap();
+    tmp.child(".amem/tasks/open.md")
+        .write_str("- finish amem\n")
+        .unwrap();
+    tmp.child(format!(".amem/activity/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("- started coding\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path());
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Today Snapshot"))
+        .stdout(predicate::str::contains("finish amem"));
+}
+
+#[test]
+fn index_creates_sqlite_index_db() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: test\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path()).arg("index");
+    cmd.assert().success();
+
+    tmp.child(".amem/.index/index.db")
+        .assert(predicate::path::exists());
+}
+
+#[test]
+fn search_uses_sqlite_index_after_indexing() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let src = tmp.child(".amem/activity/2026/02/2026-02-21.md");
+    src.write_str("東京で散歩した\n").unwrap();
+
+    let mut index = bin();
+    set_test_home(&mut index, tmp.path());
+    index.current_dir(tmp.path()).arg("index");
+    index.assert().success();
+
+    fs::remove_file(src.path()).unwrap();
+
+    let mut search = bin();
+    set_test_home(&mut search, tmp.path());
+    search
+        .current_dir(tmp.path())
+        .arg("search")
+        .arg("東京")
+        .arg("--top-k")
+        .arg("1");
+    search
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2026-02-21.md"));
+}
+
+#[test]
+fn codex_subcommand_seeds_then_resumes_last() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: tester\n")
+        .unwrap();
+
+    let mock = tmp.child("mock-codex.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+  exec)
+    if [[ "$*" == *"Today Snapshot ("* ]]; then
+      echo "exec markdown" >> "$AMEM_MOCK_CODEX_LOG"
+    else
+      echo "exec non-markdown" >> "$AMEM_MOCK_CODEX_LOG"
+    fi
+    echo '{"type":"thread.started","thread_id":"019c7f9d-2298-70f1-a19d-c164f18d7f45"}'
+    ;;
+  resume)
+    shift
+    echo "resume $*" >> "$AMEM_MOCK_CODEX_LOG"
+    ;;
+  *)
+    echo "other $*" >> "$AMEM_MOCK_CODEX_LOG"
+    ;;
+esac
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("codex.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_CODEX_BIN", mock.path())
+        .env("AMEM_MOCK_CODEX_LOG", log.path())
+        .arg("codex")
+        .arg("--prompt")
+        .arg("continue with today tasks");
+
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "exec markdown");
+    assert!(lines[1].contains("resume 019c7f9d-2298-70f1-a19d-c164f18d7f45"));
+    assert!(!lines[1].contains(" --last"));
+    assert!(lines[1].contains("continue with today tasks"));
+}
+
+#[test]
+fn codex_subcommand_resume_only_skips_seed() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-codex.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "${1:-}" >> "$AMEM_MOCK_CODEX_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("codex.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_CODEX_BIN", mock.path())
+        .env("AMEM_MOCK_CODEX_LOG", log.path())
+        .arg("codex")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines, vec!["resume".to_string()]);
+}
+
+#[test]
+fn gemini_subcommand_seeds_then_resumes_latest() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: tester\n")
+        .unwrap();
+
+    let mock = tmp.child("mock-gemini.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = "--resume" ]; then
+  echo "resume $*" >> "$AMEM_MOCK_GEMINI_LOG"
+else
+  if [[ "$*" == *"Today Snapshot ("* ]]; then
+    echo "seed markdown" >> "$AMEM_MOCK_GEMINI_LOG"
+  else
+    echo "seed non-markdown" >> "$AMEM_MOCK_GEMINI_LOG"
+  fi
+  echo '{"session_id":"f8db4215-e94c-41ec-b57a-51757fa65cc4","response":"MEMORY_READY"}'
+fi
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("gemini.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_GEMINI_BIN", mock.path())
+        .env("AMEM_MOCK_GEMINI_LOG", log.path())
+        .arg("gemini")
+        .arg("--prompt")
+        .arg("continue with today tasks");
+
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "seed markdown");
+    assert!(lines[1].contains("resume --resume f8db4215-e94c-41ec-b57a-51757fa65cc4"));
+    assert!(!lines[1].contains(" latest"));
+    assert!(lines[1].contains("continue with today tasks"));
+}
+
+#[test]
+fn gemini_subcommand_resume_only_skips_seed() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-gemini.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = "--resume" ]; then
+  echo "resume" >> "$AMEM_MOCK_GEMINI_LOG"
+else
+  echo "seed" >> "$AMEM_MOCK_GEMINI_LOG"
+fi
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("gemini.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_GEMINI_BIN", mock.path())
+        .env("AMEM_MOCK_GEMINI_LOG", log.path())
+        .arg("gemini")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines, vec!["resume".to_string()]);
+}
+
+#[test]
+fn claude_subcommand_seeds_then_resumes_with_session_id() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: tester\n")
+        .unwrap();
+
+    let mock = tmp.child("mock-claude.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+  --print)
+    if [[ "$*" == *"Today Snapshot ("* ]]; then
+      echo "seed markdown" >> "$AMEM_MOCK_CLAUDE_LOG"
+    else
+      echo "seed non-markdown" >> "$AMEM_MOCK_CLAUDE_LOG"
+    fi
+    echo '{"session_id":"7f6e5d4c-3b2a-1908-7654-3210abcdef12","response":"MEMORY_READY"}'
+    ;;
+  --resume)
+    shift
+    echo "resume $*" >> "$AMEM_MOCK_CLAUDE_LOG"
+    ;;
+  --continue)
+    echo "continue" >> "$AMEM_MOCK_CLAUDE_LOG"
+    ;;
+  *)
+    echo "other $*" >> "$AMEM_MOCK_CLAUDE_LOG"
+    ;;
+esac
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("claude.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_CLAUDE_BIN", mock.path())
+        .env("AMEM_MOCK_CLAUDE_LOG", log.path())
+        .arg("claude")
+        .arg("--prompt")
+        .arg("continue with today tasks");
+
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "seed markdown");
+    assert!(lines[1].contains("resume 7f6e5d4c-3b2a-1908-7654-3210abcdef12"));
+    assert!(lines[1].contains("continue with today tasks"));
+}
+
+#[test]
+fn claude_subcommand_resume_only_uses_continue() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-claude.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "${1:-}" >> "$AMEM_MOCK_CLAUDE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("claude.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_CLAUDE_BIN", mock.path())
+        .env("AMEM_MOCK_CLAUDE_LOG", log.path())
+        .arg("claude")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines, vec!["--continue".to_string()]);
+}
+
+#[test]
+fn copilot_subcommand_seeds_then_resumes_with_session_id() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: tester\n")
+        .unwrap();
+
+    let mock = tmp.child("mock-copilot.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+  -p)
+    if [[ "$*" == *"Today Snapshot ("* ]]; then
+      echo "seed markdown" >> "$AMEM_MOCK_COPILOT_LOG"
+    else
+      echo "seed non-markdown" >> "$AMEM_MOCK_COPILOT_LOG"
+    fi
+    touch "$PWD/copilot-session-abcd1234.md"
+    ;;
+  --resume)
+    shift
+    echo "resume $*" >> "$AMEM_MOCK_COPILOT_LOG"
+    ;;
+  --continue)
+    echo "continue $*" >> "$AMEM_MOCK_COPILOT_LOG"
+    ;;
+  *)
+    echo "other $*" >> "$AMEM_MOCK_COPILOT_LOG"
+    ;;
+esac
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("copilot.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_COPILOT_BIN", mock.path())
+        .env("AMEM_MOCK_COPILOT_LOG", log.path())
+        .arg("copilot")
+        .arg("--prompt")
+        .arg("continue with today tasks");
+
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "seed markdown");
+    assert!(lines[1].contains("resume abcd1234"));
+    assert!(lines[1].contains("-i continue with today tasks"));
+    assert!(!tmp.path().join("copilot-session-abcd1234.md").exists());
+}
+
+#[test]
+fn copilot_subcommand_resume_only_uses_continue() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-copilot.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "${1:-}" >> "$AMEM_MOCK_COPILOT_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("copilot.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_COPILOT_BIN", mock.path())
+        .env("AMEM_MOCK_COPILOT_LOG", log.path())
+        .arg("copilot")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines, vec!["--continue".to_string()]);
+}
