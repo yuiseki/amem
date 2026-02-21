@@ -260,9 +260,17 @@ set -eu
 case "${1:-}" in
   exec)
     if [[ "$*" == *"Today Snapshot ("* ]]; then
-      echo "exec markdown" >> "$AMEM_MOCK_CODEX_LOG"
+      if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
+        echo "exec markdown yolo" >> "$AMEM_MOCK_CODEX_LOG"
+      else
+        echo "exec markdown no-yolo" >> "$AMEM_MOCK_CODEX_LOG"
+      fi
     else
-      echo "exec non-markdown" >> "$AMEM_MOCK_CODEX_LOG"
+      if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
+        echo "exec non-markdown yolo" >> "$AMEM_MOCK_CODEX_LOG"
+      else
+        echo "exec non-markdown no-yolo" >> "$AMEM_MOCK_CODEX_LOG"
+      fi
     fi
     echo '{"type":"thread.started","thread_id":"019c7f9d-2298-70f1-a19d-c164f18d7f45"}'
     ;;
@@ -303,8 +311,10 @@ esac
         .map(|s| s.to_string())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "exec markdown");
-    assert!(lines[1].contains("resume 019c7f9d-2298-70f1-a19d-c164f18d7f45"));
+    assert_eq!(lines[0], "exec markdown yolo");
+    assert!(lines[1].starts_with("resume "));
+    assert!(lines[1].contains("--dangerously-bypass-approvals-and-sandbox"));
+    assert!(lines[1].contains("019c7f9d-2298-70f1-a19d-c164f18d7f45"));
     assert!(!lines[1].contains(" --last"));
     assert!(lines[1].contains("continue with today tasks"));
 }
@@ -316,7 +326,7 @@ fn codex_subcommand_resume_only_skips_seed() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-echo "${1:-}" >> "$AMEM_MOCK_CODEX_LOG"
+echo "$*" >> "$AMEM_MOCK_CODEX_LOG"
 "#,
     )
     .unwrap();
@@ -343,7 +353,8 @@ echo "${1:-}" >> "$AMEM_MOCK_CODEX_LOG"
         .lines()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lines, vec!["resume".to_string()]);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("resume --dangerously-bypass-approvals-and-sandbox --last"));
 }
 
 #[test]
@@ -357,13 +368,21 @@ fn gemini_subcommand_seeds_then_resumes_latest() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-if [ "${1:-}" = "--resume" ]; then
+if [[ "$*" == *"--resume"* ]]; then
   echo "resume $*" >> "$AMEM_MOCK_GEMINI_LOG"
 else
   if [[ "$*" == *"Today Snapshot ("* ]]; then
-    echo "seed markdown" >> "$AMEM_MOCK_GEMINI_LOG"
+    if [[ "$*" == *"--approval-mode yolo"* ]]; then
+      echo "seed markdown yolo" >> "$AMEM_MOCK_GEMINI_LOG"
+    else
+      echo "seed markdown no-yolo" >> "$AMEM_MOCK_GEMINI_LOG"
+    fi
   else
-    echo "seed non-markdown" >> "$AMEM_MOCK_GEMINI_LOG"
+    if [[ "$*" == *"--approval-mode yolo"* ]]; then
+      echo "seed non-markdown yolo" >> "$AMEM_MOCK_GEMINI_LOG"
+    else
+      echo "seed non-markdown no-yolo" >> "$AMEM_MOCK_GEMINI_LOG"
+    fi
   fi
   echo '{"session_id":"f8db4215-e94c-41ec-b57a-51757fa65cc4","response":"MEMORY_READY"}'
 fi
@@ -396,8 +415,10 @@ fi
         .map(|s| s.to_string())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "seed markdown");
-    assert!(lines[1].contains("resume --resume f8db4215-e94c-41ec-b57a-51757fa65cc4"));
+    assert_eq!(lines[0], "seed markdown yolo");
+    assert!(lines[1].starts_with("resume "));
+    assert!(lines[1].contains("--resume f8db4215-e94c-41ec-b57a-51757fa65cc4"));
+    assert!(lines[1].contains("--approval-mode yolo"));
     assert!(!lines[1].contains(" latest"));
     assert!(lines[1].contains("continue with today tasks"));
 }
@@ -409,10 +430,10 @@ fn gemini_subcommand_resume_only_skips_seed() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-if [ "${1:-}" = "--resume" ]; then
-  echo "resume" >> "$AMEM_MOCK_GEMINI_LOG"
+if [[ "$*" == *"--resume"* ]]; then
+  echo "resume $*" >> "$AMEM_MOCK_GEMINI_LOG"
 else
-  echo "seed" >> "$AMEM_MOCK_GEMINI_LOG"
+  echo "seed $*" >> "$AMEM_MOCK_GEMINI_LOG"
 fi
 "#,
     )
@@ -440,7 +461,8 @@ fi
         .lines()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lines, vec!["resume".to_string()]);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("resume --approval-mode yolo --resume latest"));
 }
 
 #[test]
@@ -454,26 +476,28 @@ fn claude_subcommand_seeds_then_resumes_with_session_id() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-case "${1:-}" in
-  --print)
+if [[ "$*" == *"--print"* ]]; then
     if [[ "$*" == *"Today Snapshot ("* ]]; then
-      echo "seed markdown" >> "$AMEM_MOCK_CLAUDE_LOG"
+      if [[ "$*" == *"--dangerously-skip-permissions"* ]]; then
+        echo "seed markdown yolo" >> "$AMEM_MOCK_CLAUDE_LOG"
+      else
+        echo "seed markdown no-yolo" >> "$AMEM_MOCK_CLAUDE_LOG"
+      fi
     else
-      echo "seed non-markdown" >> "$AMEM_MOCK_CLAUDE_LOG"
+      if [[ "$*" == *"--dangerously-skip-permissions"* ]]; then
+        echo "seed non-markdown yolo" >> "$AMEM_MOCK_CLAUDE_LOG"
+      else
+        echo "seed non-markdown no-yolo" >> "$AMEM_MOCK_CLAUDE_LOG"
+      fi
     fi
     echo '{"session_id":"7f6e5d4c-3b2a-1908-7654-3210abcdef12","response":"MEMORY_READY"}'
-    ;;
-  --resume)
-    shift
-    echo "resume $*" >> "$AMEM_MOCK_CLAUDE_LOG"
-    ;;
-  --continue)
-    echo "continue" >> "$AMEM_MOCK_CLAUDE_LOG"
-    ;;
-  *)
-    echo "other $*" >> "$AMEM_MOCK_CLAUDE_LOG"
-    ;;
-esac
+elif [[ "$*" == *"--resume"* ]]; then
+  echo "resume $*" >> "$AMEM_MOCK_CLAUDE_LOG"
+elif [[ "$*" == *"--continue"* ]]; then
+  echo "continue $*" >> "$AMEM_MOCK_CLAUDE_LOG"
+else
+  echo "other $*" >> "$AMEM_MOCK_CLAUDE_LOG"
+fi
 "#,
     )
     .unwrap();
@@ -503,8 +527,10 @@ esac
         .map(|s| s.to_string())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "seed markdown");
-    assert!(lines[1].contains("resume 7f6e5d4c-3b2a-1908-7654-3210abcdef12"));
+    assert_eq!(lines[0], "seed markdown yolo");
+    assert!(lines[1].starts_with("resume "));
+    assert!(lines[1].contains("--resume 7f6e5d4c-3b2a-1908-7654-3210abcdef12"));
+    assert!(lines[1].contains("--dangerously-skip-permissions"));
     assert!(lines[1].contains("continue with today tasks"));
 }
 
@@ -515,7 +541,7 @@ fn claude_subcommand_resume_only_uses_continue() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-echo "${1:-}" >> "$AMEM_MOCK_CLAUDE_LOG"
+echo "$*" >> "$AMEM_MOCK_CLAUDE_LOG"
 "#,
     )
     .unwrap();
@@ -542,7 +568,8 @@ echo "${1:-}" >> "$AMEM_MOCK_CLAUDE_LOG"
         .lines()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lines, vec!["--continue".to_string()]);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--dangerously-skip-permissions --continue"));
 }
 
 #[test]
@@ -556,26 +583,20 @@ fn copilot_subcommand_seeds_then_resumes_with_session_id() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-case "${1:-}" in
-  -p)
-    if [[ "$*" == *"Today Snapshot ("* ]]; then
-      echo "seed markdown" >> "$AMEM_MOCK_COPILOT_LOG"
+if [[ "$*" == *"--resume"* ]]; then
+    echo "resume $*" >> "$AMEM_MOCK_COPILOT_LOG"
+elif [[ "$*" == *"--continue"* ]]; then
+    echo "continue $*" >> "$AMEM_MOCK_COPILOT_LOG"
+elif [[ "$*" == *"Today Snapshot ("* ]]; then
+    if [[ "$*" == *"--allow-all"* ]]; then
+      echo "seed markdown yolo" >> "$AMEM_MOCK_COPILOT_LOG"
     else
-      echo "seed non-markdown" >> "$AMEM_MOCK_COPILOT_LOG"
+      echo "seed markdown no-yolo" >> "$AMEM_MOCK_COPILOT_LOG"
     fi
     touch "$PWD/copilot-session-abcd1234.md"
-    ;;
-  --resume)
-    shift
-    echo "resume $*" >> "$AMEM_MOCK_COPILOT_LOG"
-    ;;
-  --continue)
-    echo "continue $*" >> "$AMEM_MOCK_COPILOT_LOG"
-    ;;
-  *)
+else
     echo "other $*" >> "$AMEM_MOCK_COPILOT_LOG"
-    ;;
-esac
+fi
 "#,
     )
     .unwrap();
@@ -605,8 +626,10 @@ esac
         .map(|s| s.to_string())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "seed markdown");
-    assert!(lines[1].contains("resume abcd1234"));
+    assert_eq!(lines[0], "seed markdown yolo");
+    assert!(lines[1].starts_with("resume "));
+    assert!(lines[1].contains("--resume abcd1234"));
+    assert!(lines[1].contains("--allow-all"));
     assert!(lines[1].contains("-i continue with today tasks"));
     assert!(!tmp.path().join("copilot-session-abcd1234.md").exists());
 }
@@ -618,7 +641,7 @@ fn copilot_subcommand_resume_only_uses_continue() {
     mock.write_str(
         r#"#!/usr/bin/env bash
 set -eu
-echo "${1:-}" >> "$AMEM_MOCK_COPILOT_LOG"
+echo "$*" >> "$AMEM_MOCK_COPILOT_LOG"
 "#,
     )
     .unwrap();
@@ -645,5 +668,6 @@ echo "${1:-}" >> "$AMEM_MOCK_COPILOT_LOG"
         .lines()
         .map(|s| s.to_string())
         .collect();
-    assert_eq!(lines, vec!["--continue".to_string()]);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--allow-all --continue"));
 }

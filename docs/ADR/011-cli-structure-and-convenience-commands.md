@@ -103,44 +103,48 @@ Define a command structure with stable aliases and convenience commands for dail
 - `amem codex`
 - Purpose:
   - Start a Codex session with memory bootstrap context from the active memory root.
-  - Use a seed flow (`codex exec --json` with memory snapshot), extract `thread_id`, then run `codex resume <thread_id>`.
+  - Use a seed flow (`codex exec --json --dangerously-bypass-approvals-and-sandbox` with memory snapshot), extract `thread_id`, then run `codex resume --dangerously-bypass-approvals-and-sandbox <thread_id>`.
 - Common options:
   - `--resume-only` (skip seeding and resume the latest conversation)
   - `--prompt <text>` (append an initial user prompt at resume)
 - Notes:
+  - Default behavior uses YOLO mode (`--dangerously-bypass-approvals-and-sandbox`) to avoid repeated permission prompts.
   - This command is intended as an ergonomic bridge, not a replacement for Codex native session APIs.
 
 ### 11. Gemini bridge command
 - `amem gemini`
 - Purpose:
   - Start a Gemini CLI session with memory bootstrap context from the active memory root.
-  - Use a seed flow (`gemini --output-format json -p` with memory snapshot), extract `session_id`, then run `gemini --resume <session_id>`.
+  - Use a seed flow (`gemini --approval-mode yolo --output-format json -p` with memory snapshot), extract `session_id`, then run `gemini --approval-mode yolo --resume <session_id>`.
 - Common options:
   - `--resume-only` (skip seeding and resume latest directly)
   - `--prompt <text>` (pass initial interactive prompt at resume)
 - Notes:
+  - Default behavior uses YOLO mode (`--approval-mode yolo`) to avoid repeated permission prompts.
   - This command follows the same bridge pattern as `amem codex`.
 
 ### 12. Claude bridge command
 - `amem claude`
 - Purpose:
   - Start a Claude Code session with memory bootstrap context from the active memory root.
-  - Use a seed flow (`claude --print --output-format json` with memory snapshot), extract `session_id`, then run `claude --resume <session_id>`.
+  - Use a seed flow (`claude --dangerously-skip-permissions --print --output-format json` with memory snapshot), extract `session_id`, then run `claude --dangerously-skip-permissions --resume <session_id>`.
 - Common options:
   - `--resume-only` (skip seeding and run `claude --continue`)
   - `--prompt <text>` (append an initial user prompt when resuming)
 - Notes:
+  - Default behavior uses YOLO mode (`--dangerously-skip-permissions`) to avoid repeated permission prompts.
   - This command avoids `--continue` after seeding to prevent restoring the wrong conversation.
 
 ### 13. Copilot bridge command
 - `amem copilot`
 - Purpose:
   - Start a GitHub Copilot CLI session with memory bootstrap context from the active memory root.
-  - Use a seed flow (`copilot -p ... --share`), extract `session_id` from the generated `copilot-session-<id>.md`, then run `copilot --resume <session_id>`.
+  - Use a seed flow (`copilot -p ... --allow-all --share`), extract `session_id` from the generated `copilot-session-<id>.md`, then run `copilot --allow-all --resume <session_id>`.
 - Common options:
   - `--resume-only` (skip seeding and run `copilot --continue`)
   - `--prompt <text>` (append an initial interactive prompt when resuming)
 - Notes:
+  - Default behavior uses YOLO mode (`--allow-all`) to avoid repeated permission prompts.
   - This command avoids blind `--continue` after seeding to prevent restoring the wrong conversation.
 
 ## Consequences

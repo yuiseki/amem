@@ -671,8 +671,7 @@ fn cmd_codex(
         let output = ProcessCommand::new(&codex_bin)
             .arg("exec")
             .arg("--json")
-            .arg("--sandbox")
-            .arg("read-only")
+            .arg("--dangerously-bypass-approvals-and-sandbox")
             .arg("--skip-git-repo-check")
             .arg("--cd")
             .arg(cwd)
@@ -707,6 +706,7 @@ fn cmd_codex(
 
     let mut resume = ProcessCommand::new(&codex_bin);
     resume.arg("resume");
+    resume.arg("--dangerously-bypass-approvals-and-sandbox");
     if resume_only {
         resume.arg("--last");
     } else if let Some(thread_id) = seed_thread_id {
@@ -747,6 +747,8 @@ fn cmd_gemini(
         let bootstrap = gemini_bootstrap_prompt(memory_dir)?;
         let output = ProcessCommand::new(&gemini_bin)
             .current_dir(cwd)
+            .arg("--approval-mode")
+            .arg("yolo")
             .arg("--output-format")
             .arg("json")
             .arg("-p")
@@ -780,7 +782,11 @@ fn cmd_gemini(
     }
 
     let mut resume = ProcessCommand::new(&gemini_bin);
-    resume.current_dir(cwd).arg("--resume");
+    resume
+        .current_dir(cwd)
+        .arg("--approval-mode")
+        .arg("yolo")
+        .arg("--resume");
     if resume_only {
         resume.arg("latest");
     } else if let Some(session_id) = seed_session_id {
@@ -820,6 +826,7 @@ fn cmd_claude(
         let bootstrap = claude_bootstrap_prompt(memory_dir)?;
         let output = ProcessCommand::new(&claude_bin)
             .current_dir(cwd)
+            .arg("--dangerously-skip-permissions")
             .arg("--print")
             .arg("--output-format")
             .arg("json")
@@ -853,7 +860,9 @@ fn cmd_claude(
     }
 
     let mut resume = ProcessCommand::new(&claude_bin);
-    resume.current_dir(cwd);
+    resume
+        .current_dir(cwd)
+        .arg("--dangerously-skip-permissions");
     if resume_only {
         resume.arg("--continue");
     } else if let Some(session_id) = seed_session_id {
@@ -897,7 +906,7 @@ fn cmd_copilot(
             .current_dir(cwd)
             .arg("-p")
             .arg(bootstrap)
-            .arg("--allow-all-tools")
+            .arg("--allow-all")
             .arg("--share")
             .output()
             .with_context(|| format!("failed to run `{copilot_bin}` seed prompt"))?;
@@ -948,7 +957,7 @@ fn cmd_copilot(
     }
 
     let mut resume = ProcessCommand::new(&copilot_bin);
-    resume.current_dir(cwd);
+    resume.current_dir(cwd).arg("--allow-all");
     if resume_only {
         resume.arg("--continue");
     } else if let Some(session_id) = seed_session_id {
