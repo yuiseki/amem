@@ -17,8 +17,9 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 
 ### 2. Phase 1 domains
 - `diary`
-  - `amem get diary [today|yesterday|week|yyyy-mm-dd]`
+  - `amem get diary [today|yesterday|week|month|yyyy-mm-dd]`
     - `week` default: show daily summaries only (max 7 lines)
+    - `month` default: show daily summaries only (max 31 lines)
     - `--detail` / `--all`: show full diary entries
   - `amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]`
   - write target: `owner/diary/YYYY/MM/YYYY-MM-DD.md`
@@ -32,12 +33,13 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
   - `amem get owner preference`
   - `amem set owner preference <key:value>` (auto timestamp)
 - `acts`
-  - `amem get acts [today|yesterday|week|yyyy-mm-dd]`
+  - `amem get acts [today|yesterday|week|month|yyyy-mm-dd]`
     - `week` default: show daily summaries only (max 7 lines)
+    - `month` default: show daily summaries only (max 31 lines)
     - `--detail` / `--all`: show full activity entries
   - `amem set acts <text>`
 - `tasks`
-  - `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
+  - `amem get tasks [today|yesterday|week|month|yyyy-mm-dd]`
   - `amem set tasks <text>`
   - `amem set tasks done <id|text>`
 - Path mapping:
@@ -55,12 +57,14 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 - Avoid MD5-specific dependency and keep stronger default hashing.
 
 ### 5. Time semantics
-- `today`, `yesterday`, `week` are evaluated in local system timezone.
+- `today`, `yesterday`, `week`, `month` are evaluated in local system timezone.
 - `week` means the trailing 7-day window including today.
+- `month` means the current calendar month in local time.
 - For `get diary/acts/tasks`, default result size is:
   - latest 10 entries when period is omitted
   - all matching entries when period is `today|yesterday|yyyy-mm-dd`
   - for `get diary week` / `get acts week`: daily summaries only (max 7 lines)
+  - for `get diary month` / `get acts month`: daily summaries only (max 31 lines)
 - For `set diary`, `--date` defaults to today and `--time` defaults to current local time.
 
 ## Consequences

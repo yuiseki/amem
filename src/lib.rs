@@ -874,12 +874,12 @@ fn cmd_get_diary(
         entries = filtered;
     }
 
-    let summary_mode = !json
-        && !detail
-        && !all
-        && matches!(period.as_deref().map(|s| s.to_ascii_lowercase()), Some(p) if p == "week");
+    let period_norm = period.as_deref().map(|s| s.trim().to_ascii_lowercase());
+    let summary_mode =
+        !json && !detail && !all && matches!(period_norm.as_deref(), Some("week" | "month"));
     if summary_mode {
-        let summaries = collect_diary_daily_summaries(memory_dir, "week", limit)?;
+        let summary_period = period_norm.as_deref().unwrap_or("week");
+        let summaries = collect_diary_daily_summaries(memory_dir, summary_period, limit)?;
         println!("Owner Diary:");
         if summaries.is_empty() {
             println!("(none)");
@@ -942,7 +942,7 @@ fn collect_diary_daily_summaries(
 
     let mut rows: Vec<(NaiveDate, String)> = per_date.into_iter().collect();
     rows.sort_by(|a, b| b.0.cmp(&a.0));
-    rows.truncate(limit.unwrap_or(7));
+    rows.truncate(limit.unwrap_or_else(|| default_summary_limit_for_period(period)));
     Ok(rows
         .into_iter()
         .map(|(date, summary)| DailySummaryRow {
@@ -1036,12 +1036,12 @@ fn cmd_get_acts(
         entries = filtered;
     }
 
-    let summary_mode = !json
-        && !detail
-        && !all
-        && matches!(period.as_deref().map(|s| s.to_ascii_lowercase()), Some(p) if p == "week");
+    let period_norm = period.as_deref().map(|s| s.trim().to_ascii_lowercase());
+    let summary_mode =
+        !json && !detail && !all && matches!(period_norm.as_deref(), Some("week" | "month"));
     if summary_mode {
-        let summaries = collect_activity_daily_summaries(memory_dir, "week", limit)?;
+        let summary_period = period_norm.as_deref().unwrap_or("week");
+        let summaries = collect_activity_daily_summaries(memory_dir, summary_period, limit)?;
         println!("Agent Activities:");
         if summaries.is_empty() {
             println!("(none)");
@@ -1122,7 +1122,7 @@ fn collect_activity_daily_summaries(
         .map(|(date, (_, summary))| (date, summary))
         .collect();
     rows.sort_by(|a, b| b.0.cmp(&a.0));
-    rows.truncate(limit.unwrap_or(7));
+    rows.truncate(limit.unwrap_or_else(|| default_summary_limit_for_period(period)));
     Ok(rows
         .into_iter()
         .map(|(date, summary)| DailySummaryRow {
@@ -1232,9 +1232,12 @@ fn date_matches_period(date: NaiveDate, period_raw: &str) -> Result<bool> {
             let start = today - Duration::days(6);
             Ok(date >= start && date <= today)
         }
+        "month" => Ok(date.year() == today.year() && date.month() == today.month()),
         _ => {
             let specific = NaiveDate::parse_from_str(&period, "%Y-%m-%d").with_context(|| {
-                format!("unsupported period: {period_raw}. use today|yesterday|week|yyyy-mm-dd")
+                format!(
+                    "unsupported period: {period_raw}. use today|yesterday|week|month|yyyy-mm-dd"
+                )
             })?;
             Ok(date == specific)
         }
@@ -1244,13 +1247,22 @@ fn date_matches_period(date: NaiveDate, period_raw: &str) -> Result<bool> {
 fn validate_period(period_raw: &str) -> Result<()> {
     let period = period_raw.trim().to_lowercase();
     match period.as_str() {
-        "today" | "yesterday" | "week" => Ok(()),
+        "today" | "yesterday" | "week" | "month" => Ok(()),
         _ => {
             NaiveDate::parse_from_str(&period, "%Y-%m-%d").with_context(|| {
-                format!("unsupported period: {period_raw}. use today|yesterday|week|yyyy-mm-dd")
+                format!(
+                    "unsupported period: {period_raw}. use today|yesterday|week|month|yyyy-mm-dd"
+                )
             })?;
             Ok(())
         }
+    }
+}
+
+fn default_summary_limit_for_period(period_raw: &str) -> usize {
+    match period_raw.trim().to_ascii_lowercase().as_str() {
+        "month" => 31,
+        _ => 7,
     }
 }
 

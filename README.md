@@ -129,9 +129,9 @@ Domain-oriented read commands:
 - `amem get owner`
 - `amem get owner <name|github|github_username|email|location|job|occupation|lang|native_language|birthday>`
 - `amem get owner preference`
-- `amem get diary [today|yesterday|week|yyyy-mm-dd]`
-- `amem get acts [today|yesterday|week|yyyy-mm-dd]`
-- `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
+- `amem get diary [today|yesterday|week|month|yyyy-mm-dd]`
+- `amem get acts [today|yesterday|week|month|yyyy-mm-dd]`
+- `amem get tasks [today|yesterday|week|month|yyyy-mm-dd]`
 
 `get diary/acts/tasks` options:
 
@@ -142,6 +142,7 @@ Domain-oriented read commands:
   - without period: latest 10 entries
   - with period `today|yesterday|yyyy-mm-dd`: all matching entries
   - with period `week` on `diary`/`acts`: daily summary only (max 7 lines)
+  - with period `month` on `diary`/`acts`: daily summary only (max 31 lines)
     - use `--detail` or `--all` to show full entries
 
 ### `amem set ...`

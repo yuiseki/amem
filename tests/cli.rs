@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use assert_fs::prelude::*;
-use chrono::Local;
+use chrono::{Duration, Local};
 use predicates::prelude::*;
 use std::fs;
 #[cfg(unix)]
@@ -565,6 +565,67 @@ fn get_diary_week_detail_shows_full_entries() {
 }
 
 #[test]
+fn get_diary_month_shows_daily_summaries_by_default() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let old = today - Duration::days(40);
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let o_yyyy = old.format("%Y").to_string();
+    let o_mm = old.format("%m").to_string();
+
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"today-summary\"\n---\n- 08:00 today-entry\n")
+        .unwrap();
+    tmp.child(format!(
+        ".amem/owner/diary/{o_yyyy}/{o_mm}/{}.md",
+        old.format("%Y-%m-%d")
+    ))
+    .write_str("---\nsummary: \"old-summary\"\n---\n- 07:00 old-entry\n")
+    .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("diary")
+        .arg("month");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "- [{t_ymd}] today-summary"
+        )))
+        .stdout(predicate::str::contains("today-entry").not())
+        .stdout(predicate::str::contains("old-summary").not());
+}
+
+#[test]
+fn get_diary_month_detail_shows_full_entries() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"today-summary\"\n---\n- 08:00 today-entry\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("diary")
+        .arg("month")
+        .arg("--detail");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("today-entry"))
+        .stdout(predicate::str::contains("today-summary").not());
+}
+
+#[test]
 fn set_owner_without_target_fails() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
@@ -729,6 +790,67 @@ fn get_acts_week_detail_shows_full_entries() {
         .stdout(predicate::str::contains("today-entry"))
         .stdout(predicate::str::contains("yesterday-entry"))
         .stdout(predicate::str::contains(format!("- [{y_ymd}] yesterday summary")).not());
+}
+
+#[test]
+fn get_acts_month_shows_daily_summaries_by_default() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let old = today - Duration::days(40);
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let o_yyyy = old.format("%Y").to_string();
+    let o_mm = old.format("%m").to_string();
+
+    tmp.child(format!(".amem/agent/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"today-summary\"\n---\n- 08:00 [codex] today-entry\n")
+        .unwrap();
+    tmp.child(format!(
+        ".amem/agent/activity/{o_yyyy}/{o_mm}/{}.md",
+        old.format("%Y-%m-%d")
+    ))
+    .write_str("---\nsummary: \"old-summary\"\n---\n- 07:00 [codex] old-entry\n")
+    .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("acts")
+        .arg("month");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "- [{t_ymd}] today-summary"
+        )))
+        .stdout(predicate::str::contains("today-entry").not())
+        .stdout(predicate::str::contains("old-summary").not());
+}
+
+#[test]
+fn get_acts_month_detail_shows_full_entries() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/agent/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"today-summary\"\n---\n- 08:00 [codex] today-entry\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("acts")
+        .arg("month")
+        .arg("--detail");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("today-entry"))
+        .stdout(predicate::str::contains("today-summary").not());
 }
 
 #[test]
