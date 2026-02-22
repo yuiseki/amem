@@ -19,7 +19,7 @@ Define a command structure with stable aliases and convenience commands for dail
 - `amem init`
 - Purpose:
   - Initialize memory scaffold in the active memory root (default: `~/.amem`).
-  - Create default owner/tasks/inbox/activity structure if missing.
+  - Create default owner/agent namespace structure if missing.
 - Behavior:
   - Idempotent and non-destructive (must not overwrite existing files by default).
   - Prints resolved memory root path.

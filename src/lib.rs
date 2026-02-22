@@ -327,9 +327,11 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
 
     let directories = [
         memory_dir.join("owner"),
-        memory_dir.join("tasks"),
-        memory_dir.join("inbox"),
-        memory_dir.join("activity"),
+        memory_dir.join("owner").join("diary"),
+        memory_dir.join("agent"),
+        memory_dir.join("agent").join("tasks"),
+        memory_dir.join("agent").join("inbox"),
+        memory_dir.join("agent").join("activity"),
     ];
     for dir in directories {
         fs::create_dir_all(&dir)
@@ -353,10 +355,16 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
             memory_dir.join("owner").join("interests.md"),
             "# Owner Interests\n\n- \n",
         ),
-        (memory_dir.join("tasks").join("open.md"), "# Open Tasks\n\n"),
-        (memory_dir.join("tasks").join("done.md"), "# Done Tasks\n\n"),
         (
-            memory_dir.join("inbox").join("captured.md"),
+            memory_dir.join("agent").join("tasks").join("open.md"),
+            "# Open Tasks\n\n",
+        ),
+        (
+            memory_dir.join("agent").join("tasks").join("done.md"),
+            "# Done Tasks\n\n",
+        ),
+        (
+            memory_dir.join("agent").join("inbox").join("captured.md"),
             "# Captured Notes\n\n",
         ),
     ];
@@ -401,12 +409,12 @@ fn cmd_keep(
             p
         }
         "inbox" => {
-            let p = memory_dir.join("inbox").join("captured.md");
+            let p = agent_inbox_captured_path(memory_dir);
             ensure_parent(&p)?;
             p
         }
         "task-note" => {
-            let p = memory_dir.join("tasks").join("open.md");
+            let p = agent_tasks_open_path(memory_dir);
             ensure_parent(&p)?;
             p
         }
@@ -465,9 +473,9 @@ fn cmd_list(
             if let Some(k) = kind {
                 let ok = match k {
                     "owner" => s.starts_with("owner/"),
-                    "activity" => s.starts_with("activity/"),
-                    "tasks" => s.starts_with("tasks/"),
-                    "inbox" => s.starts_with("inbox/"),
+                    "activity" => s.starts_with("agent/activity/") || s.starts_with("activity/"),
+                    "tasks" => s.starts_with("agent/tasks/") || s.starts_with("tasks/"),
+                    "inbox" => s.starts_with("agent/inbox/") || s.starts_with("inbox/"),
                     _ => false,
                 };
                 if !ok {
@@ -544,13 +552,7 @@ fn cmd_today(memory_dir: &Path, date: Option<String>, json: bool) -> Result<()> 
 
 fn cmd_context(memory_dir: &Path, task: &str, date: Option<String>, json: bool) -> Result<()> {
     let d = parse_or_today(date.as_deref())?;
-    let today = TodayJson {
-        date: d.to_string(),
-        owner_profile: read_or_empty(memory_dir.join("owner").join("profile.md")),
-        owner_preferences: read_or_empty(memory_dir.join("owner").join("preferences.md")),
-        open_tasks: read_or_empty(memory_dir.join("tasks").join("open.md")),
-        activity: read_or_empty(activity_path(memory_dir, d)),
-    };
+    let today = load_today(memory_dir, d);
     let mut hits = search_hits(memory_dir, task, 5)?;
 
     if json {
@@ -805,7 +807,7 @@ fn collect_activity_entries(memory_dir: &Path) -> Result<Vec<ActivityEntry>> {
     let mut out = Vec::new();
     for rel in memory_files(memory_dir)? {
         let rel_text = rel.to_string_lossy();
-        if !rel_text.starts_with("activity/") {
+        if !rel_text.starts_with("agent/activity/") && !rel_text.starts_with("activity/") {
             continue;
         }
         let Some(date) = activity_date_from_rel(&rel) else {
@@ -932,6 +934,8 @@ struct TaskEntry {
     raw_line: String,
     #[serde(skip_serializing)]
     line_index: usize,
+    #[serde(skip_serializing)]
+    source_path: PathBuf,
 }
 
 fn cmd_get_tasks(
@@ -941,12 +945,13 @@ fn cmd_get_tasks(
     json: bool,
 ) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
-    let open_path = memory_dir.join("tasks").join("open.md");
-    let done_path = memory_dir.join("tasks").join("done.md");
-
     let mut entries = Vec::new();
-    entries.extend(load_task_entries(&open_path, "open")?);
-    entries.extend(load_task_entries(&done_path, "done")?);
+    for path in open_task_paths(memory_dir) {
+        entries.extend(load_task_entries(&path, "open")?);
+    }
+    for path in done_task_paths(memory_dir) {
+        entries.extend(load_task_entries(&path, "done")?);
+    }
 
     if let Some(period_raw) = period.as_deref() {
         validate_period(period_raw)?;
@@ -1010,12 +1015,14 @@ fn cmd_set_tasks_add(memory_dir: &Path, raw_text: String, json: bool) -> Result<
         bail!("missing task text. use: amem set tasks <task>");
     }
 
-    let open_path = memory_dir.join("tasks").join("open.md");
-    let mut existing = load_task_entries(&open_path, "open")?;
-    existing.extend(load_task_entries(
-        &memory_dir.join("tasks").join("done.md"),
-        "done",
-    )?);
+    let open_path = agent_tasks_open_path(memory_dir);
+    let mut existing = Vec::new();
+    for path in open_task_paths(memory_dir) {
+        existing.extend(load_task_entries(&path, "open")?);
+    }
+    for path in done_task_paths(memory_dir) {
+        existing.extend(load_task_entries(&path, "done")?);
+    }
     if let Some(found) = existing.into_iter().find(|e| e.text == text) {
         let hash = found.hash.unwrap_or_else(|| short_task_hash(&text));
         bail!("task already exists: [{hash}] {text}");
@@ -1046,9 +1053,11 @@ fn cmd_set_tasks_done(memory_dir: &Path, selector_raw: String, json: bool) -> Re
         bail!("missing task selector. use: amem set tasks done <hash|text>");
     }
 
-    let open_path = memory_dir.join("tasks").join("open.md");
-    let done_path = memory_dir.join("tasks").join("done.md");
-    let entries = load_task_entries(&open_path, "open")?;
+    let done_path = agent_tasks_done_path(memory_dir);
+    let mut entries = Vec::new();
+    for path in open_task_paths(memory_dir) {
+        entries.extend(load_task_entries(&path, "open")?);
+    }
     let matches: Vec<TaskEntry> = entries
         .into_iter()
         .filter(|entry| task_selector_matches(entry, &selector))
@@ -1062,7 +1071,7 @@ fn cmd_set_tasks_done(memory_dir: &Path, selector_raw: String, json: bool) -> Re
     }
 
     let target = matches[0].clone();
-    let open_content = fs::read_to_string(&open_path).unwrap_or_default();
+    let open_content = fs::read_to_string(&target.source_path).unwrap_or_default();
     let mut lines: Vec<String> = open_content.lines().map(|s| s.to_string()).collect();
     if target.line_index < lines.len() {
         lines.remove(target.line_index);
@@ -1071,15 +1080,15 @@ fn cmd_set_tasks_done(memory_dir: &Path, selector_raw: String, json: bool) -> Re
     if !rewritten.ends_with('\n') {
         rewritten.push('\n');
     }
-    fs::write(&open_path, rewritten)
-        .with_context(|| format!("failed to write {}", open_path.to_string_lossy()))?;
+    fs::write(&target.source_path, rewritten)
+        .with_context(|| format!("failed to write {}", target.source_path.to_string_lossy()))?;
     append_markdown_line(&done_path, &target.raw_line)?;
 
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "from": rel_or_abs(memory_dir, &open_path),
+                "from": rel_or_abs(memory_dir, &target.source_path),
                 "to": rel_or_abs(memory_dir, &done_path),
                 "hash": target.hash,
                 "status": "done",
@@ -1122,6 +1131,7 @@ fn load_task_entries(path: &Path, status: &str) -> Result<Vec<TaskEntry>> {
             text: parsed.text,
             raw_line: line.to_string(),
             line_index: idx,
+            source_path: path.to_path_buf(),
         });
     }
     Ok(out)
@@ -1946,8 +1956,8 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
         date: date.to_string(),
         owner_profile: read_or_empty(memory_dir.join("owner").join("profile.md")),
         owner_preferences: read_or_empty(memory_dir.join("owner").join("preferences.md")),
-        open_tasks: read_or_empty(memory_dir.join("tasks").join("open.md")),
-        activity: read_or_empty(activity_path(memory_dir, date)),
+        open_tasks: read_open_tasks_summary(memory_dir),
+        activity: read_daily_activity_summary(memory_dir, date),
     }
 }
 
@@ -1971,6 +1981,24 @@ fn parse_or_today(raw: Option<&str>) -> Result<NaiveDate> {
 }
 
 fn activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
+    agent_activity_path(memory_dir, date)
+}
+
+fn agent_activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
+    memory_dir
+        .join("agent")
+        .join("activity")
+        .join(format!("{:04}", date.year()))
+        .join(format!("{:02}", date.month()))
+        .join(format!(
+            "{:04}-{:02}-{:02}.md",
+            date.year(),
+            date.month(),
+            date.day()
+        ))
+}
+
+fn legacy_activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
     memory_dir
         .join("activity")
         .join(format!("{:04}", date.year()))
@@ -1981,6 +2009,84 @@ fn activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
             date.month(),
             date.day()
         ))
+}
+
+fn agent_tasks_open_path(memory_dir: &Path) -> PathBuf {
+    memory_dir.join("agent").join("tasks").join("open.md")
+}
+
+fn legacy_tasks_open_path(memory_dir: &Path) -> PathBuf {
+    memory_dir.join("tasks").join("open.md")
+}
+
+fn agent_tasks_done_path(memory_dir: &Path) -> PathBuf {
+    memory_dir.join("agent").join("tasks").join("done.md")
+}
+
+fn legacy_tasks_done_path(memory_dir: &Path) -> PathBuf {
+    memory_dir.join("tasks").join("done.md")
+}
+
+fn open_task_paths(memory_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        agent_tasks_open_path(memory_dir),
+        legacy_tasks_open_path(memory_dir),
+    ]
+}
+
+fn done_task_paths(memory_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        agent_tasks_done_path(memory_dir),
+        legacy_tasks_done_path(memory_dir),
+    ]
+}
+
+fn agent_inbox_captured_path(memory_dir: &Path) -> PathBuf {
+    memory_dir.join("agent").join("inbox").join("captured.md")
+}
+
+fn read_open_tasks_summary(memory_dir: &Path) -> String {
+    let mut lines = Vec::new();
+    for path in open_task_paths(memory_dir) {
+        if let Ok(content) = fs::read_to_string(path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("- ") {
+                    lines.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    dedup_keep_order(lines).join("\n")
+}
+
+fn read_daily_activity_summary(memory_dir: &Path, date: NaiveDate) -> String {
+    let mut lines = Vec::new();
+    for path in [
+        agent_activity_path(memory_dir, date),
+        legacy_activity_path(memory_dir, date),
+    ] {
+        if let Ok(content) = fs::read_to_string(path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    lines.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    dedup_keep_order(lines).join("\n")
+}
+
+fn dedup_keep_order(lines: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for line in lines {
+        if seen.insert(line.clone()) {
+            out.push(line);
+        }
+    }
+    out
 }
 
 fn ensure_parent(path: &Path) -> Result<()> {

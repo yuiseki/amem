@@ -16,3 +16,4 @@ This directory contains Architecture Decision Records (ADR) for `amem`.
 - `010-database-selection.md`
 - `011-cli-structure-and-convenience-commands.md`
 - `012-domain-oriented-get-set-cli.md`
+- `013-owner-agent-namespace-split.md`

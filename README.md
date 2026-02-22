@@ -209,10 +209,15 @@ Scaffold created by `amem init`:
 - `owner/personality.md`
 - `owner/preferences.md`
 - `owner/interests.md`
-- `tasks/open.md`
-- `tasks/done.md`
-- `inbox/captured.md`
-- `activity/YYYY/MM/YYYY-MM-DD.md` (created on first write)
+- `owner/diary/`
+- `agent/tasks/open.md`
+- `agent/tasks/done.md`
+- `agent/inbox/captured.md`
+- `agent/activity/YYYY/MM/YYYY-MM-DD.md` (created on first write)
+
+Compatibility:
+
+- Legacy paths (`tasks/*`, `inbox/*`, `activity/*`) are still read for backward compatibility.
 
 Default `owner/profile.md` template fields:
 

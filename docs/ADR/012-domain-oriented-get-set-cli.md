@@ -29,6 +29,9 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
   - `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
   - `amem set tasks <text>`
   - `amem set tasks done <id|text>`
+- Path mapping:
+  - `acts` -> `agent/activity/*`
+  - `tasks` -> `agent/tasks/*`
 
 ### 3. Owner key aliases (Phase 1)
 - `github` -> `github_username`

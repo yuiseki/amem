@@ -23,7 +23,7 @@ Make UTF-8 unigram tokenization mandatory for lexical indexing/search in v1.
 - Phase 2:
   - Introduce morphology-aware tokenization (Lindera) and BM25 scoring.
 - Apply field weights and recency boost in both phases:
-  - `owner/*` > `tasks/*` > `activity/*` > `inbox/*`
+  - `owner/*` > `agent/tasks/*` > `agent/activity/*` > `agent/inbox/*`
 
 ### 3. Future extension
 - Keep an extension point for optional morphology-based tokenizers (e.g., Lindera).

@@ -38,13 +38,15 @@ fn init_creates_memory_scaffold() {
         .assert(predicate::path::exists());
     tmp.child(".amem/owner/interests.md")
         .assert(predicate::path::exists());
-    tmp.child(".amem/tasks/open.md")
+    tmp.child(".amem/agent/tasks/open.md")
         .assert(predicate::path::exists());
-    tmp.child(".amem/tasks/done.md")
+    tmp.child(".amem/agent/tasks/done.md")
         .assert(predicate::path::exists());
-    tmp.child(".amem/inbox/captured.md")
+    tmp.child(".amem/agent/inbox/captured.md")
         .assert(predicate::path::exists());
-    tmp.child(".amem/activity")
+    tmp.child(".amem/agent/activity")
+        .assert(predicate::path::is_dir());
+    tmp.child(".amem/owner/diary")
         .assert(predicate::path::is_dir());
 }
 
@@ -111,7 +113,7 @@ fn keep_appends_to_activity_log() {
 
     cmd.assert().success();
 
-    let activity = tmp.child(".amem/activity/2026/02/2026-02-21.md");
+    let activity = tmp.child(".amem/agent/activity/2026/02/2026-02-21.md");
     activity.assert(predicate::path::exists());
     activity.assert(predicate::str::contains("Went for a walk"));
 }
@@ -122,7 +124,7 @@ fn list_and_ls_alias_work() {
     tmp.child(".amem/owner/profile.md")
         .write_str("# profile\n")
         .unwrap();
-    tmp.child(".amem/tasks/open.md")
+    tmp.child(".amem/agent/tasks/open.md")
         .write_str("- task\n")
         .unwrap();
 
@@ -132,7 +134,7 @@ fn list_and_ls_alias_work() {
     list.assert()
         .success()
         .stdout(predicate::str::contains("owner/profile.md"))
-        .stdout(predicate::str::contains("tasks/open.md"));
+        .stdout(predicate::str::contains("agent/tasks/open.md"));
 
     let mut ls = bin();
     set_test_home(&mut ls, tmp.path());
@@ -140,16 +142,16 @@ fn list_and_ls_alias_work() {
     ls.assert()
         .success()
         .stdout(predicate::str::contains("owner/profile.md"))
-        .stdout(predicate::str::contains("tasks/open.md"));
+        .stdout(predicate::str::contains("agent/tasks/open.md"));
 }
 
 #[test]
 fn search_and_remember_alias_work() {
     let tmp = assert_fs::TempDir::new().unwrap();
-    tmp.child(".amem/activity/2026/02/2026-02-21.md")
+    tmp.child(".amem/agent/activity/2026/02/2026-02-21.md")
         .write_str("東京で散歩した\n")
         .unwrap();
-    tmp.child(".amem/activity/2026/02/2026-02-20.md")
+    tmp.child(".amem/agent/activity/2026/02/2026-02-20.md")
         .write_str("大阪で会議した\n")
         .unwrap();
 
@@ -191,10 +193,10 @@ fn default_command_runs_today() {
     tmp.child(".amem/owner/profile.md")
         .write_str("name: yuiseki\n")
         .unwrap();
-    tmp.child(".amem/tasks/open.md")
+    tmp.child(".amem/agent/tasks/open.md")
         .write_str("- finish amem\n")
         .unwrap();
-    tmp.child(format!(".amem/activity/{yyyy}/{mm}/{ymd}.md"))
+    tmp.child(format!(".amem/agent/activity/{yyyy}/{mm}/{ymd}.md"))
         .write_str("- started coding\n")
         .unwrap();
 
@@ -205,6 +207,33 @@ fn default_command_runs_today() {
         .success()
         .stdout(predicate::str::contains("Today Snapshot"))
         .stdout(predicate::str::contains("finish amem"));
+}
+
+#[test]
+fn default_command_reads_legacy_paths_for_compatibility() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yyyy = today.format("%Y").to_string();
+    let mm = today.format("%m").to_string();
+    let ymd = today.format("%Y-%m-%d").to_string();
+
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: yuiseki\n")
+        .unwrap();
+    tmp.child(".amem/tasks/open.md")
+        .write_str("- legacy task\n")
+        .unwrap();
+    tmp.child(format!(".amem/activity/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("- legacy activity\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path());
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("legacy task"))
+        .stdout(predicate::str::contains("legacy activity"));
 }
 
 #[test]
@@ -226,7 +255,7 @@ fn index_creates_sqlite_index_db() {
 #[test]
 fn search_uses_sqlite_index_after_indexing() {
     let tmp = assert_fs::TempDir::new().unwrap();
-    let src = tmp.child(".amem/activity/2026/02/2026-02-21.md");
+    let src = tmp.child(".amem/agent/activity/2026/02/2026-02-21.md");
     src.write_str("東京で散歩した\n").unwrap();
 
     let mut index = bin();
@@ -358,9 +387,9 @@ fn set_tasks_add_blocks_duplicates_and_done_moves_task() {
         .arg(&hash);
     done.assert().success();
 
-    tmp.child(".amem/tasks/open.md")
+    tmp.child(".amem/agent/tasks/open.md")
         .assert(predicate::str::contains("xxxについて調査する").not());
-    tmp.child(".amem/tasks/done.md")
+    tmp.child(".amem/agent/tasks/done.md")
         .assert(predicate::str::contains("xxxについて調査する"));
 }
 
@@ -376,10 +405,10 @@ fn get_acts_filters_by_today_period() {
     let y_mm = yesterday.format("%m").to_string();
     let y_ymd = yesterday.format("%Y-%m-%d").to_string();
 
-    tmp.child(format!(".amem/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+    tmp.child(format!(".amem/agent/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
         .write_str("- 08:13 [codex] today task\n")
         .unwrap();
-    tmp.child(format!(".amem/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+    tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
         .write_str("- 07:00 [codex] yesterday task\n")
         .unwrap();
 

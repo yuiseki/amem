@@ -19,10 +19,11 @@ Use Markdown files on the filesystem as the Source of Truth (SoT), rooted at `.a
 - `.amem/owner/personality.md`
 - `.amem/owner/preferences.md`
 - `.amem/owner/interests.md`
-- `.amem/activity/YYYY/MM/YYYY-MM-DD.md` (recent activity)
-- `.amem/tasks/open.md`
-- `.amem/tasks/done.md`
-- `.amem/inbox/captured.md`
+- `.amem/owner/diary/YYYY/MM/YYYY-MM-DD.md` (owner life log)
+- `.amem/agent/activity/YYYY/MM/YYYY-MM-DD.md` (agent-side activity)
+- `.amem/agent/tasks/open.md`
+- `.amem/agent/tasks/done.md`
+- `.amem/agent/inbox/captured.md`
 
 ### 3. Derived data
 - Indexes and caches are not SoT.

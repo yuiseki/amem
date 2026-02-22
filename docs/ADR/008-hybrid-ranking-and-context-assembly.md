@@ -25,13 +25,13 @@ Use hybrid retrieval (lexical + semantic), fuse with RRF, and assemble context w
 - Apply boosts after fusion:
   - recency boost for recent activity files
   - owner-priority boost for `owner/*`
-  - task-priority boost for `tasks/open.md`
+  - task-priority boost for `agent/tasks/open.md`
 - Keep final score and component breakdown for debugging.
 
 ### 3. Context assembly policy
 - Build final context in this order:
   1. owner essentials (`owner/profile.md`, `owner/preferences.md`)
-  2. open tasks (`tasks/open.md`)
+  2. open tasks (`agent/tasks/open.md`)
   3. top-ranked recent activity chunks
   4. supporting historical chunks
 - Deduplicate near-identical chunks by path + overlap hash.

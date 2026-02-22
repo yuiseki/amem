@@ -15,6 +15,7 @@ Normalize owner-specific memory under `owner/` and separate it from activity str
 - `.amem/owner/personality.md`
 - `.amem/owner/preferences.md`
 - `.amem/owner/interests.md`
+- `.amem/owner/diary/YYYY/MM/YYYY-MM-DD.md` (optional but recommended life log stream)
 
 ### 2. Memory metadata
 Where possible, each durable fact should include:
@@ -25,8 +26,8 @@ Where possible, each durable fact should include:
 ### 3. Context priority order
 1. `owner/profile.md`
 2. `owner/preferences.md`
-3. `tasks/open.md`
-4. recent `activity/*`
+3. `agent/tasks/open.md`
+4. recent `agent/activity/*`
 
 ### 4. Update policy
 - Owner references can be overwritten when needed.
