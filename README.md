@@ -109,6 +109,11 @@ List memory files.
 Render Today Snapshot (Markdown by default, JSON with `--json`).
 
 - `--date <yyyy-mm-dd>`
+- Markdown snapshot labels use explicit namespaces:
+  - `Owner Profile`
+  - `Owner Preferences` (hidden when empty)
+  - `Agent Tasks`
+  - `Agent Activities`
 
 ### `amem context --task <text>`
 
@@ -125,6 +130,13 @@ Domain-oriented read commands:
 - `amem get owner preference`
 - `amem get acts [today|yesterday|week|yyyy-mm-dd]`
 - `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
+
+`get acts/tasks` options:
+
+- `--limit <n>`
+- default behavior:
+  - without period: latest 10 entries
+  - with period (`today|yesterday|week|yyyy-mm-dd`): all matching entries
 
 ### `amem set ...`
 

@@ -133,14 +133,14 @@ pub enum GetTarget {
     #[command(visible_alias = "activity", visible_alias = "activities")]
     Acts {
         period: Option<String>,
-        #[arg(long, default_value_t = 10)]
-        limit: usize,
+        #[arg(long)]
+        limit: Option<usize>,
     },
     #[command(visible_alias = "task", visible_alias = "todo")]
     Tasks {
         period: Option<String>,
-        #[arg(long, default_value_t = 10)]
-        limit: usize,
+        #[arg(long)]
+        limit: Option<usize>,
     },
 }
 
@@ -569,10 +569,10 @@ fn cmd_context(memory_dir: &Path, task: &str, date: Option<String>, json: bool) 
 
     println!("Task Context: {task}");
     println!(
-        "\n== Today Snapshot ==\nOpen Tasks:\n{}",
+        "\n== Today Snapshot ==\nAgent Tasks:\n{}",
         empty_as_na(&today.open_tasks)
     );
-    println!("\nActivity:\n{}", empty_as_na(&today.activity));
+    println!("\nAgent Activities:\n{}", empty_as_na(&today.activity));
     println!("\n== Related Memory ==");
     if hits.is_empty() {
         println!("(none)");
@@ -774,7 +774,12 @@ struct ActivityEntry {
     path: String,
 }
 
-fn cmd_get_acts(memory_dir: &Path, period: Option<String>, limit: usize, json: bool) -> Result<()> {
+fn cmd_get_acts(
+    memory_dir: &Path,
+    period: Option<String>,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
     let mut entries = collect_activity_entries(memory_dir)?;
     if let Some(period_raw) = period.as_deref() {
@@ -787,11 +792,16 @@ fn cmd_get_acts(memory_dir: &Path, period: Option<String>, limit: usize, json: b
         }
         entries = filtered;
     }
-    entries.truncate(limit);
+    let effective_limit = limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 });
+    entries.truncate(effective_limit);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
+        println!("Agent Activities:");
+        if entries.is_empty() {
+            println!("(none)");
+        }
         for entry in entries {
             if let Some(source) = entry.source {
                 println!("- [{}] [{}] {}", entry.timestamp, source, entry.text);
@@ -941,7 +951,7 @@ struct TaskEntry {
 fn cmd_get_tasks(
     memory_dir: &Path,
     period: Option<String>,
-    limit: usize,
+    limit: Option<usize>,
     json: bool,
 ) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
@@ -978,11 +988,16 @@ fn cmd_get_tasks(
             .then_with(|| a.status.cmp(&b.status))
             .then_with(|| a.text.cmp(&b.text))
     });
-    entries.truncate(limit);
+    let effective_limit = limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 });
+    entries.truncate(effective_limit);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
+        println!("Agent Tasks:");
+        if entries.is_empty() {
+            println!("(none)");
+        }
         for entry in entries {
             let ts = entry.timestamp.unwrap_or_else(|| "unknown".to_string());
             if let Some(hash) = entry.hash {
@@ -1962,14 +1977,37 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
 }
 
 fn render_today_snapshot(today: &TodayJson) -> String {
-    format!(
-        "Today Snapshot ({})\n\n== Owner Profile ==\n{}\n\n== Owner Preferences ==\n{}\n\n== Open Tasks ==\n{}\n\n== Activity ==\n{}",
+    let mut out = format!(
+        "Today Snapshot ({})\n\n== Owner Profile ==\n{}",
         today.date,
-        empty_as_na(&today.owner_profile),
-        empty_as_na(&today.owner_preferences),
+        empty_as_na(&today.owner_profile)
+    );
+    if has_meaningful_owner_preferences(&today.owner_preferences) {
+        out.push_str(&format!(
+            "\n\n== Owner Preferences ==\n{}",
+            empty_as_na(&today.owner_preferences)
+        ));
+    }
+    out.push_str(&format!(
+        "\n\n== Agent Tasks ==\n{}\n\n== Agent Activities ==\n{}",
         empty_as_na(&today.open_tasks),
-        empty_as_na(&today.activity),
-    )
+        empty_as_na(&today.activity)
+    ));
+    out
+}
+
+fn has_meaningful_owner_preferences(content: &str) -> bool {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed == "-" || trimmed == "*" {
+            continue;
+        }
+        return true;
+    }
+    false
 }
 
 fn parse_or_today(raw: Option<&str>) -> Result<NaiveDate> {

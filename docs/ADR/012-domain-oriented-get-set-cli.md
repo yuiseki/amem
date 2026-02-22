@@ -46,6 +46,9 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 ### 5. Time semantics
 - `today`, `yesterday`, `week` are evaluated in local system timezone.
 - `week` means the trailing 7-day window including today.
+- For `get acts/tasks`, default result size is:
+  - latest 10 entries when period is omitted
+  - all matching entries when period is specified
 
 ## Consequences
 - Improves usability for interactive assistant workflows.
