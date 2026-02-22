@@ -8,7 +8,7 @@ Local memory CLI for AI assistant or AI agent workflows.
 - append-only logging (`keep` / `capture`)
 - memory listing and search (`list` / `search`)
 - optional SQLite indexing (`index`)
-- bridge commands for coding agents (`codex`, `gemini`, `claude`, `copilot`)
+- bridge commands for coding agents (`codex`, `gemini`, `claude`, `copilot`, `opencode`)
 
 ## Install
 
@@ -50,6 +50,7 @@ Top-level commands:
 - `gemini`
 - `claude`
 - `copilot`
+- `opencode`
 
 Global options:
 
@@ -215,6 +216,17 @@ Common options:
 - Resume: `copilot --allow-all --resume <session_id>`
 - `--resume-only` uses `copilot --allow-all --continue`
 
+### `amem opencode`
+
+- Seed: `opencode run --agent build --format json ...`
+- Resume: `opencode --agent build --session <session_id>`
+- `--resume-only` uses `opencode --agent build --continue`
+- Sets `OPENCODE_PERMISSION={"*":"allow"}` by default
+- Sets `OPENCODE_CONFIG_CONTENT={"agent":{"build":{"permission":{"*":"allow"}}}}` by default
+- Set `AMEM_OPENCODE_AGENT` to override the default `build` agent
+- Set `AMEM_OPENCODE_PERMISSION` (or pre-set `OPENCODE_PERMISSION`) to override permission policy
+- Set `AMEM_OPENCODE_CONFIG_CONTENT` (or pre-set `OPENCODE_CONFIG_CONTENT`) to override config-content policy
+
 Note:
 
 - Bridge commands default to YOLO/auto-approval style flags to reduce repeated permission prompts.
@@ -262,6 +274,10 @@ Index files:
 - `AMEM_GEMINI_BIN`: override `gemini` executable
 - `AMEM_CLAUDE_BIN`: override `claude` executable
 - `AMEM_COPILOT_BIN`: override `copilot` executable
+- `AMEM_OPENCODE_BIN`: override `opencode` executable
+- `AMEM_OPENCODE_AGENT`: override OpenCode agent name (default: `build`)
+- `AMEM_OPENCODE_PERMISSION`: override OpenCode permission JSON passed as `OPENCODE_PERMISSION`
+- `AMEM_OPENCODE_CONFIG_CONTENT`: override OpenCode config JSON passed as `OPENCODE_CONFIG_CONTENT`
 
 ## Development
 

@@ -123,6 +123,12 @@ pub enum Commands {
         #[arg(long)]
         prompt: Option<String>,
     },
+    Opencode {
+        #[arg(long, default_value_t = false)]
+        resume_only: bool,
+        #[arg(long)]
+        prompt: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -285,6 +291,10 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
             resume_only,
             prompt,
         }) => cmd_copilot(&memory_dir, cwd, resume_only, prompt),
+        Some(Commands::Opencode {
+            resume_only,
+            prompt,
+        }) => cmd_opencode(&memory_dir, cwd, resume_only, prompt),
     }
 }
 
@@ -2228,6 +2238,114 @@ fn cmd_copilot(
     Ok(())
 }
 
+fn cmd_opencode(
+    memory_dir: &Path,
+    cwd: &Path,
+    resume_only: bool,
+    prompt: Option<String>,
+) -> Result<()> {
+    const DEFAULT_OPENCODE_PERMISSION: &str = r#"{"*":"allow"}"#;
+
+    init_memory_scaffold(memory_dir)?;
+
+    let opencode_bin =
+        std::env::var("AMEM_OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string());
+    let opencode_agent =
+        std::env::var("AMEM_OPENCODE_AGENT").unwrap_or_else(|_| "build".to_string());
+    let opencode_permission = std::env::var("AMEM_OPENCODE_PERMISSION")
+        .ok()
+        .or_else(|| std::env::var("OPENCODE_PERMISSION").ok())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENCODE_PERMISSION.to_string());
+    let default_opencode_config_content = serde_json::json!({
+        "agent": {
+            opencode_agent.clone(): {
+                "permission": {
+                    "*": "allow"
+                }
+            }
+        }
+    })
+    .to_string();
+    let opencode_config_content = std::env::var("AMEM_OPENCODE_CONFIG_CONTENT")
+        .ok()
+        .or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or(default_opencode_config_content);
+    let mut seed_session_id: Option<String> = None;
+    if !resume_only {
+        let bootstrap = opencode_bootstrap_prompt(memory_dir)?;
+        let output = ProcessCommand::new(&opencode_bin)
+            .current_dir(cwd)
+            .env("OPENCODE_PERMISSION", &opencode_permission)
+            .env("OPENCODE_CONFIG_CONTENT", &opencode_config_content)
+            .arg("run")
+            .arg("--agent")
+            .arg(&opencode_agent)
+            .arg("--format")
+            .arg("json")
+            .arg(bootstrap)
+            .output()
+            .with_context(|| format!("failed to run `{opencode_bin} run` seed prompt"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            bail!(
+                "`{opencode_bin} run` seed failed (status: {}): {}{}",
+                output
+                    .status
+                    .code()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "signal".to_string()),
+                stderr.trim(),
+                if stderr.trim().is_empty() {
+                    format!("\n{}", stdout.trim())
+                } else {
+                    String::new()
+                }
+            );
+        }
+
+        seed_session_id = extract_opencode_session_id(&output.stdout, &output.stderr);
+        if seed_session_id.is_none() {
+            bail!(
+                "seed session was created but sessionID was not found in OpenCode JSON output; refusing to fallback to `--continue`"
+            );
+        }
+    }
+
+    let mut resume = ProcessCommand::new(&opencode_bin);
+    resume
+        .current_dir(cwd)
+        .env("OPENCODE_PERMISSION", &opencode_permission)
+        .env("OPENCODE_CONFIG_CONTENT", &opencode_config_content)
+        .arg("--agent")
+        .arg(&opencode_agent);
+    if resume_only {
+        resume.arg("--continue");
+    } else if let Some(session_id) = seed_session_id {
+        resume.arg("--session").arg(session_id);
+    } else {
+        bail!("internal error: missing OpenCode seed session id");
+    }
+    if let Some(p) = prompt {
+        resume.arg("--prompt").arg(p);
+    }
+    let status = resume
+        .status()
+        .with_context(|| format!("failed to run `{opencode_bin}` resume command"))?;
+    if !status.success() {
+        bail!(
+            "`{opencode_bin}` resume command failed (status: {})",
+            status
+                .code()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "signal".to_string())
+        );
+    }
+    Ok(())
+}
+
 fn codex_bootstrap_prompt(memory_dir: &Path) -> Result<String> {
     let today = load_today(memory_dir, Local::now().date_naive());
     let snapshot_md = render_today_snapshot(&today);
@@ -2259,6 +2377,16 @@ fn claude_bootstrap_prompt(memory_dir: &Path) -> Result<String> {
 }
 
 fn copilot_bootstrap_prompt(memory_dir: &Path) -> Result<String> {
+    let today = load_today(memory_dir, Local::now().date_naive());
+    let snapshot_md = render_today_snapshot(&today);
+    Ok(format!(
+        "Load this amem snapshot for the next interactive session. Reply exactly MEMORY_READY.\n\nmemory_root: {}\n\n{}\n",
+        memory_dir.to_string_lossy(),
+        snapshot_md
+    ))
+}
+
+fn opencode_bootstrap_prompt(memory_dir: &Path) -> Result<String> {
     let today = load_today(memory_dir, Local::now().date_naive());
     let snapshot_md = render_today_snapshot(&today);
     Ok(format!(
@@ -2316,6 +2444,15 @@ fn extract_copilot_session_id_from_output(stdout: &[u8], stderr: &[u8]) -> Optio
         }
     }
     None
+}
+
+fn extract_opencode_session_id(stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    if let Some(id) =
+        extract_string_field_from_json_output(stdout, &["session_id", "sessionId", "sessionID"])
+    {
+        return Some(id);
+    }
+    extract_string_field_from_json_output(stderr, &["session_id", "sessionId", "sessionID"])
 }
 
 fn collect_copilot_share_files(cwd: &Path) -> Result<Vec<PathBuf>> {

@@ -1278,3 +1278,278 @@ echo "$*" >> "$AMEM_MOCK_COPILOT_LOG"
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("--allow-all --continue"));
 }
+
+#[test]
+fn opencode_subcommand_seeds_then_resumes_with_session_id() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: tester\n")
+        .unwrap();
+
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+if [[ "${1:-}" == "run" ]]; then
+    if [[ "$*" == *"Today Snapshot ("* ]]; then
+      if [[ "$*" == *"--format json"* && "$*" == *"--agent build"* ]]; then
+        echo "seed markdown json yolo perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+      else
+        echo "seed markdown non-yolo perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+      fi
+    else
+      echo "seed non-markdown perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+    fi
+    echo '{"type":"step_start","sessionID":"ses_abcd1234"}'
+elif [[ "$*" == *"--session"* ]]; then
+    echo "resume $* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+elif [[ "$*" == *"--continue"* ]]; then
+    echo "continue $* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+else
+    echo "other $* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+fi
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--prompt")
+        .arg("continue with today tasks");
+
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].starts_with("seed markdown json yolo"));
+    assert!(lines[0].contains("\"*\":\"allow\""));
+    assert!(lines[0].contains("\"agent\":{\"build\":{\"permission\":{\"*\":\"allow\"}}}"));
+    assert!(lines[1].starts_with("resume "));
+    assert!(lines[1].contains("--agent build"));
+    assert!(lines[1].contains("--session ses_abcd1234"));
+    assert!(lines[1].contains("--prompt continue with today tasks"));
+    assert!(lines[1].contains("\"*\":\"allow\""));
+    assert!(lines[1].contains("\"agent\":{\"build\":{\"permission\":{\"*\":\"allow\"}}}"));
+}
+
+#[test]
+fn opencode_subcommand_resume_only_uses_continue() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "$* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--agent build --continue"));
+    assert!(lines[0].contains("\"*\":\"allow\""));
+    assert!(lines[0].contains("\"agent\":{\"build\":{\"permission\":{\"*\":\"allow\"}}}"));
+}
+
+#[test]
+fn opencode_subcommand_supports_agent_override_env() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "$* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env("AMEM_OPENCODE_AGENT", "custom-yolo")
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--agent custom-yolo --continue"));
+    assert!(lines[0].contains("\"*\":\"allow\""));
+    assert!(lines[0].contains("\"agent\":{\"custom-yolo\":{\"permission\":{\"*\":\"allow\"}}}"));
+}
+
+#[test]
+fn opencode_subcommand_supports_permission_override_env() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "$* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env("AMEM_OPENCODE_PERMISSION", r#"{"*":"ask"}"#)
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--agent build --continue"));
+    assert!(lines[0].contains("\"*\":\"ask\""));
+    assert!(lines[0].contains("\"agent\":{\"build\":{\"permission\":{\"*\":\"allow\"}}}"));
+}
+
+#[test]
+fn opencode_subcommand_honors_existing_opencode_permission_env() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "$* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env("OPENCODE_PERMISSION", r#"{"*":"deny"}"#)
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--agent build --continue"));
+    assert!(lines[0].contains("\"*\":\"deny\""));
+    assert!(lines[0].contains("\"agent\":{\"build\":{\"permission\":{\"*\":\"allow\"}}}"));
+}
+
+#[test]
+fn opencode_subcommand_supports_config_content_override_env() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mock = tmp.child("mock-opencode.sh");
+    mock.write_str(
+        r#"#!/usr/bin/env bash
+set -eu
+echo "$* perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
+"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(mock.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(mock.path(), perms).unwrap();
+    }
+
+    let log = tmp.child("opencode.log");
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .env("AMEM_OPENCODE_BIN", mock.path())
+        .env(
+            "AMEM_OPENCODE_CONFIG_CONTENT",
+            r#"{"agent":{"build":{"permission":{"*":"deny"}}}}"#,
+        )
+        .env("AMEM_MOCK_OPENCODE_LOG", log.path())
+        .arg("opencode")
+        .arg("--resume-only");
+    cmd.assert().success();
+
+    let lines: Vec<String> = fs::read_to_string(log.path())
+        .unwrap()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("--agent build --continue"));
+    assert!(lines[0].contains("cfg:{\"agent\":{\"build\":{\"permission\":{\"*\":\"deny\"}}}}"));
+}

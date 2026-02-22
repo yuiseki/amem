@@ -150,7 +150,25 @@ Define a command structure with stable aliases and convenience commands for dail
   - Default behavior uses YOLO mode (`--allow-all`) to avoid repeated permission prompts.
   - This command avoids blind `--continue` after seeding to prevent restoring the wrong conversation.
 
-### 14. Domain-oriented get/set commands
+### 14. OpenCode bridge command
+- `amem opencode`
+- Purpose:
+  - Start an OpenCode session with memory bootstrap context from the active memory root.
+  - Use a seed flow (`opencode run --agent build --format json ...`), extract `sessionID`, then run `opencode --agent build --session <session_id>`.
+- Common options:
+  - `--resume-only` (skip seeding and run `opencode --agent build --continue`)
+  - `--prompt <text>` (append an initial interactive prompt when resuming)
+- Notes:
+  - Default behavior forces `--agent build` so OpenCode follows the build agent's permissive (YOLO-like) policy.
+  - Default behavior also sets `OPENCODE_PERMISSION` to `{"*":"allow"}`.
+  - Default behavior also sets `OPENCODE_CONFIG_CONTENT` to `{"agent":{"build":{"permission":{"*":"allow"}}}}` so agent-level permission precedence remains permissive.
+  - `AMEM_OPENCODE_AGENT` can override the agent name when needed.
+  - `AMEM_OPENCODE_PERMISSION` (or pre-set `OPENCODE_PERMISSION`) can override the permission policy.
+  - `AMEM_OPENCODE_CONFIG_CONTENT` (or pre-set `OPENCODE_CONFIG_CONTENT`) can override agent-level config content.
+  - `sessionID` may appear as `sessionID`, `sessionId`, or `session_id` depending on output shape.
+  - This command avoids blind `--continue` after seeding to prevent restoring the wrong conversation.
+
+### 15. Domain-oriented get/set commands
 - `amem get <domain> ...`
 - `amem set <domain> ...`
 - Purpose:
