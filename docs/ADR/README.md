@@ -15,3 +15,4 @@ This directory contains Architecture Decision Records (ADR) for `amem`.
 - `009-language-selection.md`
 - `010-database-selection.md`
 - `011-cli-structure-and-convenience-commands.md`
+- `012-domain-oriented-get-set-cli.md`

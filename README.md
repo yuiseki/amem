@@ -43,6 +43,9 @@ Top-level commands:
 - `watch`
 - `capture`
 - `context`
+- `get`
+- `set`
+- `owner` (alias for `get owner`)
 - `codex`
 - `gemini`
 - `claude`
@@ -112,6 +115,26 @@ Render Today Snapshot (Markdown by default, JSON with `--json`).
 Build task-oriented context from today snapshot + related memory hits.
 
 - `--date <yyyy-mm-dd>`
+
+### `amem get ...`
+
+Domain-oriented read commands:
+
+- `amem get owner`
+- `amem get owner <name|github|github_username|email|location|job|occupation|lang|native_language|birthday>`
+- `amem get owner preference`
+- `amem get acts [today|yesterday|week|yyyy-mm-dd]`
+- `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
+
+### `amem set ...`
+
+Domain-oriented write commands:
+
+- `amem set owner <key> <value>`
+- `amem set owner preference <key:value>` (auto timestamp)
+- `amem set acts <text>`
+- `amem set tasks <text>` (returns short task id)
+- `amem set tasks done <id|text>`
 
 ### `amem search <query>` / `amem remember <query>`
 
@@ -190,6 +213,14 @@ Scaffold created by `amem init`:
 - `tasks/done.md`
 - `inbox/captured.md`
 - `activity/YYYY/MM/YYYY-MM-DD.md` (created on first write)
+
+Default `owner/profile.md` template fields:
+
+- `name`
+- `github_username`
+- `location`
+- `occupation`
+- `native_language`
 
 Index files:
 

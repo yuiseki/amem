@@ -147,6 +147,20 @@ Define a command structure with stable aliases and convenience commands for dail
   - Default behavior uses YOLO mode (`--allow-all`) to avoid repeated permission prompts.
   - This command avoids blind `--continue` after seeding to prevent restoring the wrong conversation.
 
+### 14. Domain-oriented get/set commands
+- `amem get <domain> ...`
+- `amem set <domain> ...`
+- Purpose:
+  - Provide a human-first command surface focused on intent and memory domains.
+  - Keep existing low-level commands available for backward compatibility and scripting.
+- Initial domains:
+  - `owner`
+  - `acts`
+  - `tasks`
+- Notes:
+  - Canonical behavior and alias rules are detailed in ADR 012.
+  - Existing commands (`keep`, `list`, `today`, `search`) remain supported.
+
 ## Consequences
 - Faster day-to-day operation for both humans and assistant automation.
 - Lower prompt/tool friction due to memorable command names (`remember`, `today`).

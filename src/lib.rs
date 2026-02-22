@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime};
 use clap::{Parser, Subcommand};
 use globset::{Glob, GlobSetBuilder};
 use path_clean::PathClean;
@@ -88,6 +88,17 @@ pub enum Commands {
         #[arg(long)]
         date: Option<String>,
     },
+    Get {
+        #[command(subcommand)]
+        target: GetTarget,
+    },
+    Set {
+        #[command(subcommand)]
+        target: SetTarget,
+    },
+    Owner {
+        target: Option<String>,
+    },
     Codex {
         #[arg(long, default_value_t = false)]
         resume_only: bool,
@@ -111,6 +122,48 @@ pub enum Commands {
         resume_only: bool,
         #[arg(long)]
         prompt: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GetTarget {
+    Owner {
+        target: Option<String>,
+    },
+    #[command(visible_alias = "activity", visible_alias = "activities")]
+    Acts {
+        period: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    #[command(visible_alias = "task", visible_alias = "todo")]
+    Tasks {
+        period: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SetTarget {
+    Owner {
+        target: Option<String>,
+        #[arg(value_name = "VALUE", trailing_var_arg = true)]
+        value: Vec<String>,
+    },
+    #[command(visible_alias = "activity", visible_alias = "activities")]
+    Acts {
+        #[arg(value_name = "TEXT", required = true, num_args = 1.., trailing_var_arg = true)]
+        text: Vec<String>,
+        #[arg(long)]
+        date: Option<String>,
+        #[arg(long, default_value = "manual")]
+        source: String,
+    },
+    #[command(visible_alias = "task", visible_alias = "todo")]
+    Tasks {
+        #[arg(value_name = "ARG", required = true, num_args = 1.., trailing_var_arg = true)]
+        args: Vec<String>,
     },
 }
 
@@ -191,6 +244,9 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
             source,
         }) => cmd_keep(&memory_dir, &text, &kind, date, &source, cli.json),
         Some(Commands::Context { task, date }) => cmd_context(&memory_dir, &task, date, cli.json),
+        Some(Commands::Get { target }) => cmd_get(&memory_dir, target, cli.json),
+        Some(Commands::Set { target }) => cmd_set(&memory_dir, target, cli.json),
+        Some(Commands::Owner { target }) => cmd_get_owner(&memory_dir, target, cli.json),
         Some(Commands::Codex {
             resume_only,
             prompt,
@@ -283,7 +339,7 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
     let files = [
         (
             memory_dir.join("owner").join("profile.md"),
-            "# Owner Profile\n\nname: \nlocation: \noccupation: \n",
+            "# Owner Profile\n\nname: \ngithub_username: \nlocation: \noccupation: \nnative_language: \n",
         ),
         (
             memory_dir.join("owner").join("personality.md"),
@@ -524,6 +580,672 @@ fn cmd_context(memory_dir: &Path, task: &str, date: Option<String>, json: bool) 
         }
     }
     Ok(())
+}
+
+fn cmd_get(memory_dir: &Path, target: GetTarget, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    match target {
+        GetTarget::Owner { target } => cmd_get_owner(memory_dir, target, json),
+        GetTarget::Acts { period, limit } => cmd_get_acts(memory_dir, period, limit, json),
+        GetTarget::Tasks { period, limit } => cmd_get_tasks(memory_dir, period, limit, json),
+    }
+}
+
+fn cmd_set(memory_dir: &Path, target: SetTarget, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    match target {
+        SetTarget::Owner { target, value } => cmd_set_owner(memory_dir, target, value, json),
+        SetTarget::Acts { text, date, source } => {
+            let joined = text.join(" ");
+            cmd_keep(memory_dir, joined.trim(), "activity", date, &source, json)
+        }
+        SetTarget::Tasks { args } => cmd_set_tasks(memory_dir, args, json),
+    }
+}
+
+fn cmd_get_owner(memory_dir: &Path, target: Option<String>, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let profile_path = memory_dir.join("owner").join("profile.md");
+    let preferences_path = memory_dir.join("owner").join("preferences.md");
+
+    match target.as_deref().map(|s| s.trim().to_lowercase()) {
+        None => {
+            let content = read_or_empty(profile_path.clone());
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": rel_or_abs(memory_dir, &profile_path),
+                        "content": content,
+                    }))?
+                );
+            } else {
+                println!("{}", content);
+            }
+            Ok(())
+        }
+        Some(t) if t == "preference" || t == "preferences" => {
+            let content = read_or_empty(preferences_path.clone());
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": rel_or_abs(memory_dir, &preferences_path),
+                        "content": content,
+                    }))?
+                );
+            } else {
+                println!("{}", content);
+            }
+            Ok(())
+        }
+        Some(t) => {
+            let key = canonical_owner_key(&t).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unsupported owner key: {t}. supported: name, github_username(github), email, location, occupation(job), native_language(lang), birthday"
+                )
+            })?;
+            let content = read_or_empty(profile_path);
+            let value = owner_profile_value(&content, key).unwrap_or_default();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "key": key,
+                        "value": value,
+                    }))?
+                );
+            } else {
+                println!("{value}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn cmd_set_owner(
+    memory_dir: &Path,
+    target: Option<String>,
+    value_parts: Vec<String>,
+    json: bool,
+) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let Some(target_raw) = target.map(|s| s.trim().to_lowercase()) else {
+        bail!(
+            "missing target. use: amem set owner <key> <value>. keys: name, github_username(github), email, location, occupation(job), native_language(lang), birthday, preference"
+        );
+    };
+    let value = value_parts.join(" ").trim().to_string();
+
+    if target_raw == "preference" || target_raw == "preferences" {
+        if value.is_empty() {
+            bail!("missing key:value. use: amem set owner preference <key:value>");
+        }
+        let Some((raw_key, raw_val)) = value.split_once(':') else {
+            bail!("invalid preference format. use key:value");
+        };
+        let key = raw_key.trim();
+        let val = raw_val.trim();
+        if key.is_empty() || val.is_empty() {
+            bail!("invalid preference format. use key:value");
+        }
+        let now = Local::now();
+        let line = format!("- [{}] {}: {}", now.format("%Y-%m-%d %H:%M"), key, val);
+        let path = memory_dir.join("owner").join("preferences.md");
+        append_markdown_line(&path, &line)?;
+
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "path": rel_or_abs(memory_dir, &path),
+                    "key": key,
+                    "value": val,
+                    "recorded_at": now.format("%Y-%m-%d %H:%M").to_string(),
+                }))?
+            );
+        } else {
+            println!("{}", rel_or_abs(memory_dir, &path));
+        }
+        return Ok(());
+    }
+
+    let key = canonical_owner_key(&target_raw).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported owner key: {target_raw}. supported: name, github_username(github), email, location, occupation(job), native_language(lang), birthday, preference"
+        )
+    })?;
+    if value.is_empty() {
+        bail!("missing value. use: amem set owner {key} <value>");
+    }
+
+    let path = memory_dir.join("owner").join("profile.md");
+    let mut lines: Vec<String> = fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut replaced = false;
+    for line in &mut lines {
+        if line.starts_with(&format!("{key}:"))
+            || (key == "github_username" && line.starts_with("github_handle:"))
+        {
+            *line = format!("{key}: {value}");
+            replaced = true;
+            break;
+        }
+    }
+    if !replaced {
+        if !lines.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        lines.push(format!("{key}: {value}"));
+    }
+
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    fs::write(&path, out).with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": rel_or_abs(memory_dir, &path),
+                "key": key,
+                "value": value,
+            }))?
+        );
+    } else {
+        println!("{}", rel_or_abs(memory_dir, &path));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ActivityEntry {
+    timestamp: String,
+    source: Option<String>,
+    text: String,
+    path: String,
+}
+
+fn cmd_get_acts(memory_dir: &Path, period: Option<String>, limit: usize, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let mut entries = collect_activity_entries(memory_dir)?;
+    if let Some(period_raw) = period.as_deref() {
+        validate_period(period_raw)?;
+        let mut filtered = Vec::new();
+        for entry in entries {
+            if activity_entry_matches_period(&entry, period_raw)? {
+                filtered.push(entry);
+            }
+        }
+        entries = filtered;
+    }
+    entries.truncate(limit);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        for entry in entries {
+            if let Some(source) = entry.source {
+                println!("- [{}] [{}] {}", entry.timestamp, source, entry.text);
+            } else {
+                println!("- [{}] {}", entry.timestamp, entry.text);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_activity_entries(memory_dir: &Path) -> Result<Vec<ActivityEntry>> {
+    let mut out = Vec::new();
+    for rel in memory_files(memory_dir)? {
+        let rel_text = rel.to_string_lossy();
+        if !rel_text.starts_with("activity/") {
+            continue;
+        }
+        let Some(date) = activity_date_from_rel(&rel) else {
+            continue;
+        };
+        let path = memory_dir.join(&rel);
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        for line in content.lines() {
+            if let Some(entry) = parse_activity_line(&date, line, &rel_text) {
+                out.push(entry);
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        b.timestamp
+            .cmp(&a.timestamp)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    Ok(out)
+}
+
+fn activity_date_from_rel(rel: &Path) -> Option<NaiveDate> {
+    let file = rel.file_name()?.to_str()?;
+    if file.len() < 10 {
+        return None;
+    }
+    NaiveDate::parse_from_str(&file[..10], "%Y-%m-%d").ok()
+}
+
+fn parse_activity_line(date: &NaiveDate, line: &str, path: &str) -> Option<ActivityEntry> {
+    let body = line.strip_prefix("- ")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut time = "00:00".to_string();
+    let mut rest = body;
+    if body.len() >= 5 {
+        let candidate = &body[..5];
+        if is_hhmm(candidate) {
+            time = candidate.to_string();
+            rest = body[5..].trim_start();
+        }
+    }
+
+    let (source, text) = if let Some(after_open) = rest.strip_prefix('[') {
+        if let Some(end) = after_open.find(']') {
+            let source = after_open[..end].trim().to_string();
+            let text = after_open[end + 1..].trim().to_string();
+            (
+                if source.is_empty() {
+                    None
+                } else {
+                    Some(source)
+                },
+                text,
+            )
+        } else {
+            (None, rest.trim().to_string())
+        }
+    } else {
+        (None, rest.trim().to_string())
+    };
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(ActivityEntry {
+        timestamp: format!("{} {}", date.format("%Y-%m-%d"), time),
+        source,
+        text,
+        path: path.to_string(),
+    })
+}
+
+fn activity_entry_matches_period(entry: &ActivityEntry, period: &str) -> Result<bool> {
+    if entry.timestamp.len() < 10 {
+        return Ok(false);
+    }
+    let date = NaiveDate::parse_from_str(&entry.timestamp[..10], "%Y-%m-%d")
+        .with_context(|| format!("invalid activity timestamp: {}", entry.timestamp))?;
+    date_matches_period(date, period)
+}
+
+fn date_matches_period(date: NaiveDate, period_raw: &str) -> Result<bool> {
+    let period = period_raw.trim().to_lowercase();
+    let today = Local::now().date_naive();
+    match period.as_str() {
+        "today" => Ok(date == today),
+        "yesterday" => Ok(date == today - Duration::days(1)),
+        "week" => {
+            let start = today - Duration::days(6);
+            Ok(date >= start && date <= today)
+        }
+        _ => {
+            let specific = NaiveDate::parse_from_str(&period, "%Y-%m-%d").with_context(|| {
+                format!("unsupported period: {period_raw}. use today|yesterday|week|yyyy-mm-dd")
+            })?;
+            Ok(date == specific)
+        }
+    }
+}
+
+fn validate_period(period_raw: &str) -> Result<()> {
+    let period = period_raw.trim().to_lowercase();
+    match period.as_str() {
+        "today" | "yesterday" | "week" => Ok(()),
+        _ => {
+            NaiveDate::parse_from_str(&period, "%Y-%m-%d").with_context(|| {
+                format!("unsupported period: {period_raw}. use today|yesterday|week|yyyy-mm-dd")
+            })?;
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TaskEntry {
+    status: String,
+    timestamp: Option<String>,
+    hash: Option<String>,
+    text: String,
+    #[serde(skip_serializing)]
+    raw_line: String,
+    #[serde(skip_serializing)]
+    line_index: usize,
+}
+
+fn cmd_get_tasks(
+    memory_dir: &Path,
+    period: Option<String>,
+    limit: usize,
+    json: bool,
+) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let open_path = memory_dir.join("tasks").join("open.md");
+    let done_path = memory_dir.join("tasks").join("done.md");
+
+    let mut entries = Vec::new();
+    entries.extend(load_task_entries(&open_path, "open")?);
+    entries.extend(load_task_entries(&done_path, "done")?);
+
+    if let Some(period_raw) = period.as_deref() {
+        validate_period(period_raw)?;
+        let mut filtered = Vec::new();
+        for entry in entries {
+            let Some(ts) = entry.timestamp.as_deref() else {
+                continue;
+            };
+            if ts.len() < 10 {
+                continue;
+            }
+            let date = NaiveDate::parse_from_str(&ts[..10], "%Y-%m-%d")
+                .with_context(|| format!("invalid task timestamp: {ts}"))?;
+            if date_matches_period(date, period_raw)? {
+                filtered.push(entry);
+            }
+        }
+        entries = filtered;
+    }
+
+    entries.sort_by(|a, b| {
+        b.timestamp
+            .cmp(&a.timestamp)
+            .then_with(|| a.status.cmp(&b.status))
+            .then_with(|| a.text.cmp(&b.text))
+    });
+    entries.truncate(limit);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        for entry in entries {
+            let ts = entry.timestamp.unwrap_or_else(|| "unknown".to_string());
+            if let Some(hash) = entry.hash {
+                println!("- [{}] [{}] [{}] {}", ts, entry.status, hash, entry.text);
+            } else {
+                println!("- [{}] [{}] {}", ts, entry.status, entry.text);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_set_tasks(memory_dir: &Path, args: Vec<String>, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    if args.is_empty() {
+        bail!("missing task args. use: amem set tasks <task> | amem set tasks done <hash|text>");
+    }
+    if args[0].eq_ignore_ascii_case("done") {
+        if args.len() < 2 {
+            bail!("missing task selector. use: amem set tasks done <hash|text>");
+        }
+        return cmd_set_tasks_done(memory_dir, args[1..].join(" "), json);
+    }
+    cmd_set_tasks_add(memory_dir, args.join(" "), json)
+}
+
+fn cmd_set_tasks_add(memory_dir: &Path, raw_text: String, json: bool) -> Result<()> {
+    let text = raw_text.trim().to_string();
+    if text.is_empty() {
+        bail!("missing task text. use: amem set tasks <task>");
+    }
+
+    let open_path = memory_dir.join("tasks").join("open.md");
+    let mut existing = load_task_entries(&open_path, "open")?;
+    existing.extend(load_task_entries(
+        &memory_dir.join("tasks").join("done.md"),
+        "done",
+    )?);
+    if let Some(found) = existing.into_iter().find(|e| e.text == text) {
+        let hash = found.hash.unwrap_or_else(|| short_task_hash(&text));
+        bail!("task already exists: [{hash}] {text}");
+    }
+
+    let hash = short_task_hash(&text);
+    let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
+    append_markdown_line(&open_path, &format!("- [{now}] [{hash}] {text}"))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": rel_or_abs(memory_dir, &open_path),
+                "hash": hash,
+                "status": "added",
+            }))?
+        );
+    } else {
+        println!("{hash}");
+    }
+    Ok(())
+}
+
+fn cmd_set_tasks_done(memory_dir: &Path, selector_raw: String, json: bool) -> Result<()> {
+    let selector = selector_raw.trim().to_string();
+    if selector.is_empty() {
+        bail!("missing task selector. use: amem set tasks done <hash|text>");
+    }
+
+    let open_path = memory_dir.join("tasks").join("open.md");
+    let done_path = memory_dir.join("tasks").join("done.md");
+    let entries = load_task_entries(&open_path, "open")?;
+    let matches: Vec<TaskEntry> = entries
+        .into_iter()
+        .filter(|entry| task_selector_matches(entry, &selector))
+        .collect();
+
+    if matches.is_empty() {
+        bail!("task not found: {selector}");
+    }
+    if matches.len() > 1 {
+        bail!("multiple tasks matched selector: {selector}");
+    }
+
+    let target = matches[0].clone();
+    let open_content = fs::read_to_string(&open_path).unwrap_or_default();
+    let mut lines: Vec<String> = open_content.lines().map(|s| s.to_string()).collect();
+    if target.line_index < lines.len() {
+        lines.remove(target.line_index);
+    }
+    let mut rewritten = lines.join("\n");
+    if !rewritten.ends_with('\n') {
+        rewritten.push('\n');
+    }
+    fs::write(&open_path, rewritten)
+        .with_context(|| format!("failed to write {}", open_path.to_string_lossy()))?;
+    append_markdown_line(&done_path, &target.raw_line)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "from": rel_or_abs(memory_dir, &open_path),
+                "to": rel_or_abs(memory_dir, &done_path),
+                "hash": target.hash,
+                "status": "done",
+            }))?
+        );
+    } else if let Some(hash) = target.hash {
+        println!("{hash}");
+    } else {
+        println!("{}", target.text);
+    }
+    Ok(())
+}
+
+fn task_selector_matches(entry: &TaskEntry, selector: &str) -> bool {
+    let query = selector.trim();
+    if query.is_empty() {
+        return false;
+    }
+    if query.chars().all(|c| c.is_ascii_hexdigit()) && query.len() <= 7 {
+        return entry
+            .hash
+            .as_deref()
+            .map(|h| h.starts_with(query))
+            .unwrap_or(false);
+    }
+    entry.text == query
+}
+
+fn load_task_entries(path: &Path, status: &str) -> Result<Vec<TaskEntry>> {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let mut out = Vec::new();
+    for (idx, line) in content.lines().enumerate() {
+        let Some(parsed) = parse_task_line(line) else {
+            continue;
+        };
+        out.push(TaskEntry {
+            status: status.to_string(),
+            timestamp: parsed.timestamp,
+            hash: parsed.hash,
+            text: parsed.text,
+            raw_line: line.to_string(),
+            line_index: idx,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone)]
+struct ParsedTaskLine {
+    timestamp: Option<String>,
+    hash: Option<String>,
+    text: String,
+}
+
+fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
+    let body = line.strip_prefix("- ")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut rest = body;
+    let mut timestamp = None;
+    let mut hash = None;
+
+    if let Some((token, after_token)) = take_bracket_token(rest) {
+        if NaiveDateTime::parse_from_str(&token, "%Y-%m-%d %H:%M").is_ok() {
+            timestamp = Some(token);
+            rest = after_token;
+            if let Some((hash_token, after_hash)) = take_bracket_token(rest) {
+                if hash_token.chars().all(|c| c.is_ascii_hexdigit()) {
+                    hash = Some(hash_token.to_lowercase());
+                    rest = after_hash;
+                }
+            }
+        }
+    }
+
+    let text = rest.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    Some(ParsedTaskLine {
+        timestamp,
+        hash,
+        text,
+    })
+}
+
+fn take_bracket_token(input: &str) -> Option<(String, &str)> {
+    let trimmed = input.trim_start();
+    let after_open = trimmed.strip_prefix('[')?;
+    let end = after_open.find(']')?;
+    let token = after_open[..end].trim().to_string();
+    let rest = after_open[end + 1..].trim_start();
+    Some((token, rest))
+}
+
+fn append_markdown_line(path: &Path, line: &str) -> Result<()> {
+    ensure_parent(path)?;
+
+    let needs_newline = fs::read(path)
+        .map(|bytes| !bytes.is_empty() && !bytes.ends_with(b"\n"))
+        .unwrap_or(false);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.to_string_lossy()))?;
+    if needs_newline {
+        file.write_all(b"\n")
+            .with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
+    }
+    file.write_all(line.as_bytes())
+        .with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
+    file.write_all(b"\n")
+        .with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
+    Ok(())
+}
+
+fn short_task_hash(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    digest[..7].to_string()
+}
+
+fn is_hhmm(raw: &str) -> bool {
+    if raw.len() != 5 {
+        return false;
+    }
+    let bytes = raw.as_bytes();
+    bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2] == b':'
+        && bytes[3].is_ascii_digit()
+        && bytes[4].is_ascii_digit()
+}
+
+fn canonical_owner_key(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_lowercase().as_str() {
+        "name" => Some("name"),
+        "github_username" | "github" | "github_handle" => Some("github_username"),
+        "email" => Some("email"),
+        "location" => Some("location"),
+        "occupation" | "job" => Some("occupation"),
+        "native_language" | "lang" => Some("native_language"),
+        "birthday" => Some("birthday"),
+        _ => None,
+    }
+}
+
+fn owner_profile_value(content: &str, key: &str) -> Option<String> {
+    let mut aliases = vec![key];
+    if key == "github_username" {
+        aliases.push("github_handle");
+    }
+
+    for line in content.lines() {
+        for alias in &aliases {
+            let prefix = format!("{alias}:");
+            if let Some(rest) = line.strip_prefix(&prefix) {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn cmd_index(memory_dir: &Path, rebuild: bool, json: bool) -> Result<()> {

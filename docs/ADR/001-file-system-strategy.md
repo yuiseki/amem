@@ -15,7 +15,7 @@ Use Markdown files on the filesystem as the Source of Truth (SoT), rooted at `.a
 - Overridable via `--memory-dir <path>` or `AMEM_DIR`
 
 ### 2. Base SoT layout
-- `.amem/owner/profile.md` (name, location, occupation, core attributes)
+- `.amem/owner/profile.md` (name, github_username, location, occupation, native_language, core attributes)
 - `.amem/owner/personality.md`
 - `.amem/owner/preferences.md`
 - `.amem/owner/interests.md`

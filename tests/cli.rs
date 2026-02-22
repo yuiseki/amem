@@ -28,6 +28,10 @@ fn init_creates_memory_scaffold() {
 
     tmp.child(".amem/owner/profile.md")
         .assert(predicate::path::exists());
+    tmp.child(".amem/owner/profile.md")
+        .assert(predicate::str::contains("github_username: "));
+    tmp.child(".amem/owner/profile.md")
+        .assert(predicate::str::contains("native_language: "));
     tmp.child(".amem/owner/personality.md")
         .assert(predicate::path::exists());
     tmp.child(".amem/owner/preferences.md")
@@ -244,6 +248,165 @@ fn search_uses_sqlite_index_after_indexing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("2026-02-21.md"));
+}
+
+#[test]
+fn get_owner_supports_alias_key_and_owner_alias_command() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/owner/profile.md")
+        .write_str(
+            "# Owner Profile\n\nname: ユイ\ngithub_username: yuiseki\nnative_language: 日本語\n",
+        )
+        .unwrap();
+
+    let mut get_lang = bin();
+    set_test_home(&mut get_lang, tmp.path());
+    get_lang
+        .current_dir(tmp.path())
+        .arg("get")
+        .arg("owner")
+        .arg("lang");
+    get_lang
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("日本語"));
+
+    let mut owner_alias = bin();
+    set_test_home(&mut owner_alias, tmp.path());
+    owner_alias
+        .current_dir(tmp.path())
+        .arg("owner")
+        .arg("github");
+    owner_alias
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("yuiseki"));
+}
+
+#[test]
+fn set_owner_updates_profile_and_preferences() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    let mut set_name = bin();
+    set_test_home(&mut set_name, tmp.path());
+    set_name
+        .current_dir(tmp.path())
+        .arg("set")
+        .arg("owner")
+        .arg("name")
+        .arg("ユイ");
+    set_name.assert().success();
+
+    let mut set_pref = bin();
+    set_test_home(&mut set_pref, tmp.path());
+    set_pref
+        .current_dir(tmp.path())
+        .arg("set")
+        .arg("owner")
+        .arg("preference")
+        .arg("特技:プログラミング");
+    set_pref.assert().success();
+
+    tmp.child(".amem/owner/profile.md")
+        .assert(predicate::str::contains("name: ユイ"));
+    tmp.child(".amem/owner/preferences.md")
+        .assert(predicate::str::contains("特技: プログラミング"));
+}
+
+#[test]
+fn set_owner_without_target_fails() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path()).arg("set").arg("owner");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("missing target"));
+}
+
+#[test]
+fn set_tasks_add_blocks_duplicates_and_done_moves_task() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    let mut add = bin();
+    set_test_home(&mut add, tmp.path());
+    add.current_dir(tmp.path())
+        .arg("set")
+        .arg("tasks")
+        .arg("xxxについて調査する");
+    let add_output = add.assert().success().get_output().stdout.clone();
+    let hash = String::from_utf8(add_output).unwrap().trim().to_string();
+    assert!(hash.len() == 7);
+
+    let mut dup = bin();
+    set_test_home(&mut dup, tmp.path());
+    dup.current_dir(tmp.path())
+        .arg("set")
+        .arg("tasks")
+        .arg("xxxについて調査する");
+    dup.assert()
+        .failure()
+        .stderr(predicate::str::contains("task already exists"));
+
+    let mut done = bin();
+    set_test_home(&mut done, tmp.path());
+    done.current_dir(tmp.path())
+        .arg("set")
+        .arg("tasks")
+        .arg("done")
+        .arg(&hash);
+    done.assert().success();
+
+    tmp.child(".amem/tasks/open.md")
+        .assert(predicate::str::contains("xxxについて調査する").not());
+    tmp.child(".amem/tasks/done.md")
+        .assert(predicate::str::contains("xxxについて調査する"));
+}
+
+#[test]
+fn get_acts_filters_by_today_period() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("- 08:13 [codex] today task\n")
+        .unwrap();
+    tmp.child(format!(".amem/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 07:00 [codex] yesterday task\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("acts")
+        .arg("today");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("today task"))
+        .stdout(predicate::str::contains("yesterday task").not());
+}
+
+#[test]
+fn get_acts_rejects_invalid_period() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("acts")
+        .arg("foo");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported period"));
 }
 
 #[test]

@@ -11,7 +11,7 @@ These facts should not be mixed with short-lived activity logs.
 Normalize owner-specific memory under `owner/` and separate it from activity streams.
 
 ### 1. Required files
-- `.amem/owner/profile.md` (name, location, occupation, timezone, constraints)
+- `.amem/owner/profile.md` (name, github_username, location, occupation, native_language, timezone, constraints)
 - `.amem/owner/personality.md`
 - `.amem/owner/preferences.md`
 - `.amem/owner/interests.md`
