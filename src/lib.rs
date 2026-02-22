@@ -130,6 +130,12 @@ pub enum GetTarget {
     Owner {
         target: Option<String>,
     },
+    #[command(visible_alias = "diaries")]
+    Diary {
+        period: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     #[command(visible_alias = "activity", visible_alias = "activities")]
     Acts {
         period: Option<String>,
@@ -186,6 +192,7 @@ struct TodayJson {
     date: String,
     owner_profile: String,
     owner_preferences: String,
+    owner_diary: String,
     open_tasks: String,
     activity: String,
 }
@@ -595,6 +602,7 @@ fn cmd_get(memory_dir: &Path, target: GetTarget, json: bool) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
     match target {
         GetTarget::Owner { target } => cmd_get_owner(memory_dir, target, json),
+        GetTarget::Diary { period, limit } => cmd_get_diary(memory_dir, period, limit, json),
         GetTarget::Acts { period, limit } => cmd_get_acts(memory_dir, period, limit, json),
         GetTarget::Tasks { period, limit } => cmd_get_tasks(memory_dir, period, limit, json),
     }
@@ -812,6 +820,110 @@ struct ActivityEntry {
     source: Option<String>,
     text: String,
     path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DiaryEntry {
+    timestamp: String,
+    text: String,
+    path: String,
+}
+
+fn cmd_get_diary(
+    memory_dir: &Path,
+    period: Option<String>,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let mut entries = collect_diary_entries(memory_dir)?;
+    if let Some(period_raw) = period.as_deref() {
+        validate_period(period_raw)?;
+        let mut filtered = Vec::new();
+        for entry in entries {
+            if diary_entry_matches_period(&entry, period_raw)? {
+                filtered.push(entry);
+            }
+        }
+        entries = filtered;
+    }
+    let effective_limit = limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 });
+    entries.truncate(effective_limit);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        println!("Owner Diary:");
+        if entries.is_empty() {
+            println!("(none)");
+        }
+        for entry in entries {
+            println!("- [{}] {}", entry.timestamp, entry.text);
+        }
+    }
+    Ok(())
+}
+
+fn collect_diary_entries(memory_dir: &Path) -> Result<Vec<DiaryEntry>> {
+    let mut out = Vec::new();
+    for rel in memory_files(memory_dir)? {
+        let rel_text = rel.to_string_lossy();
+        if !rel_text.starts_with("owner/diary/") {
+            continue;
+        }
+        let Some(date) = activity_date_from_rel(&rel) else {
+            continue;
+        };
+        let path = memory_dir.join(&rel);
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        for line in content.lines() {
+            if let Some(entry) = parse_diary_line(&date, line, &rel_text) {
+                out.push(entry);
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        b.timestamp
+            .cmp(&a.timestamp)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    Ok(out)
+}
+
+fn parse_diary_line(date: &NaiveDate, line: &str, path: &str) -> Option<DiaryEntry> {
+    let body = line.strip_prefix("- ")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut time = "00:00".to_string();
+    let mut text = body;
+    if body.len() >= 5 {
+        let candidate = &body[..5];
+        if is_hhmm(candidate) {
+            time = candidate.to_string();
+            text = body[5..].trim_start();
+        }
+    }
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(DiaryEntry {
+        timestamp: format!("{} {}", date.format("%Y-%m-%d"), time),
+        text: text.to_string(),
+        path: path.to_string(),
+    })
+}
+
+fn diary_entry_matches_period(entry: &DiaryEntry, period: &str) -> Result<bool> {
+    if entry.timestamp.len() < 10 {
+        return Ok(false);
+    }
+    let date = NaiveDate::parse_from_str(&entry.timestamp[..10], "%Y-%m-%d")
+        .with_context(|| format!("invalid diary timestamp: {}", entry.timestamp))?;
+    date_matches_period(date, period)
 }
 
 fn cmd_get_acts(
@@ -2011,6 +2123,7 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
         date: date.to_string(),
         owner_profile: read_or_empty(memory_dir.join("owner").join("profile.md")),
         owner_preferences: read_or_empty(memory_dir.join("owner").join("preferences.md")),
+        owner_diary: read_daily_owner_diary(memory_dir, date),
         open_tasks: read_open_tasks_summary(memory_dir),
         activity: read_daily_activity_summary(memory_dir, date),
     }
@@ -2028,6 +2141,10 @@ fn render_today_snapshot(today: &TodayJson) -> String {
             empty_as_na(&today.owner_preferences)
         ));
     }
+    out.push_str(&format!(
+        "\n\n== Owner Diary ==\n{}",
+        empty_as_na(&today.owner_diary)
+    ));
     out.push_str(&format!(
         "\n\n== Agent Tasks ==\n{}\n\n== Agent Activities ==\n{}",
         empty_as_na(&today.open_tasks),
@@ -2178,6 +2295,14 @@ fn read_daily_activity_summary(memory_dir: &Path, date: NaiveDate) -> String {
         }
     }
     dedup_keep_order(lines).join("\n")
+}
+
+fn read_daily_owner_diary(memory_dir: &Path, date: NaiveDate) -> String {
+    let path = owner_diary_path(memory_dir, date);
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 fn dedup_keep_order(lines: Vec<String>) -> Vec<String> {

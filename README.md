@@ -112,6 +112,7 @@ Render Today Snapshot (Markdown by default, JSON with `--json`).
 - Markdown snapshot labels use explicit namespaces:
   - `Owner Profile`
   - `Owner Preferences` (hidden when empty)
+  - `Owner Diary`
   - `Agent Tasks`
   - `Agent Activities`
 
@@ -128,10 +129,11 @@ Domain-oriented read commands:
 - `amem get owner`
 - `amem get owner <name|github|github_username|email|location|job|occupation|lang|native_language|birthday>`
 - `amem get owner preference`
+- `amem get diary [today|yesterday|week|yyyy-mm-dd]`
 - `amem get acts [today|yesterday|week|yyyy-mm-dd]`
 - `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
 
-`get acts/tasks` options:
+`get diary/acts/tasks` options:
 
 - `--limit <n>`
 - default behavior:

@@ -55,6 +55,7 @@ Define a command structure with stable aliases and convenience commands for dail
   - Provide a practical daily snapshot for assistant execution.
   - Include at minimum:
     - owner essentials (`owner/profile.md`, `owner/preferences.md`)
+    - owner daily diary (`owner/diary/YYYY/MM/YYYY-MM-DD.md`)
     - agent open tasks (`agent/tasks/open.md`)
     - agent today's activity log (`agent/activity/YYYY/MM/YYYY-MM-DD.md`)
     - most relevant memory candidates for near-term actions

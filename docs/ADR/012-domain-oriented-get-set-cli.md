@@ -17,6 +17,7 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 
 ### 2. Phase 1 domains
 - `diary`
+  - `amem get diary [today|yesterday|week|yyyy-mm-dd]`
   - `amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]`
   - write target: `owner/diary/YYYY/MM/YYYY-MM-DD.md`
 - `owner`
@@ -49,7 +50,7 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 ### 5. Time semantics
 - `today`, `yesterday`, `week` are evaluated in local system timezone.
 - `week` means the trailing 7-day window including today.
-- For `get acts/tasks`, default result size is:
+- For `get diary/acts/tasks`, default result size is:
   - latest 10 entries when period is omitted
   - all matching entries when period is specified
 - For `set diary`, `--date` defaults to today and `--time` defaults to current local time.

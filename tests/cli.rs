@@ -193,6 +193,9 @@ fn default_command_runs_today() {
     tmp.child(".amem/owner/profile.md")
         .write_str("name: yuiseki\n")
         .unwrap();
+    tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("- 09:50 diary entry\n")
+        .unwrap();
     tmp.child(".amem/agent/tasks/open.md")
         .write_str("- finish amem\n")
         .unwrap();
@@ -206,6 +209,8 @@ fn default_command_runs_today() {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("Today Snapshot"))
+        .stdout(predicate::str::contains("== Owner Diary =="))
+        .stdout(predicate::str::contains("diary entry"))
         .stdout(predicate::str::contains("== Agent Tasks =="))
         .stdout(predicate::str::contains("== Agent Activities =="))
         .stdout(predicate::str::contains("== Owner Preferences ==").not())
@@ -415,6 +420,72 @@ fn set_diary_uses_today_and_now_when_date_time_omitted() {
     let time = parts.next().unwrap_or("");
     assert_eq!(time.len(), 5);
     assert_eq!(time.chars().nth(2), Some(':'));
+}
+
+#[test]
+fn get_diary_filters_by_today_period() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("- 08:00 today diary\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 09:00 yesterday diary\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("diary")
+        .arg("today");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Owner Diary:"))
+        .stdout(predicate::str::contains("today diary"))
+        .stdout(predicate::str::contains("yesterday diary").not());
+}
+
+#[test]
+fn get_diary_week_shows_full_window_by_default() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    let mut today_lines = String::new();
+    for i in 0..12 {
+        today_lines.push_str(&format!("- 08:{:02} today-{}\n", i, i));
+    }
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str(&today_lines)
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 07:00 yesterday-visible\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("diary")
+        .arg("week");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("yesterday-visible"));
 }
 
 #[test]
