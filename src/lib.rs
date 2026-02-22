@@ -135,12 +135,20 @@ pub enum GetTarget {
         period: Option<String>,
         #[arg(long)]
         limit: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        detail: bool,
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
     #[command(visible_alias = "activity", visible_alias = "activities")]
     Acts {
         period: Option<String>,
         #[arg(long)]
         limit: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        detail: bool,
+        #[arg(long, default_value_t = false)]
+        all: bool,
     },
     #[command(visible_alias = "task", visible_alias = "todo")]
     Tasks {
@@ -434,16 +442,12 @@ fn cmd_keep(
         }
         other => bail!("unsupported kind: {other}"),
     };
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&target)
-        .with_context(|| format!("failed to open {}", target.to_string_lossy()))?;
-
     let line = format!("- {} [{}] {}\n", now.format("%H:%M"), source, text.trim());
-    file.write_all(line.as_bytes())
-        .with_context(|| format!("failed to write {}", target.to_string_lossy()))?;
+    if kind == "activity" {
+        append_daily_line_with_frontmatter(&target, target_date, line.trim_end())?;
+    } else {
+        append_markdown_line(&target, line.trim_end())?;
+    }
 
     if json {
         println!(
@@ -602,8 +606,18 @@ fn cmd_get(memory_dir: &Path, target: GetTarget, json: bool) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
     match target {
         GetTarget::Owner { target } => cmd_get_owner(memory_dir, target, json),
-        GetTarget::Diary { period, limit } => cmd_get_diary(memory_dir, period, limit, json),
-        GetTarget::Acts { period, limit } => cmd_get_acts(memory_dir, period, limit, json),
+        GetTarget::Diary {
+            period,
+            limit,
+            detail,
+            all,
+        } => cmd_get_diary(memory_dir, period, limit, detail, all, json),
+        GetTarget::Acts {
+            period,
+            limit,
+            detail,
+            all,
+        } => cmd_get_acts(memory_dir, period, limit, detail, all, json),
         GetTarget::Tasks { period, limit } => cmd_get_tasks(memory_dir, period, limit, json),
     }
 }
@@ -636,7 +650,11 @@ fn cmd_set_diary(
     let target_date = parse_or_today(date.as_deref())?;
     let target_time = parse_or_now_time(time.as_deref())?;
     let path = owner_diary_path(memory_dir, target_date);
-    append_markdown_line(&path, &format!("- {} {}", target_time, entry))?;
+    append_daily_line_with_frontmatter(
+        &path,
+        target_date,
+        &format!("- {} {}", target_time, entry),
+    )?;
 
     if json {
         println!(
@@ -829,10 +847,18 @@ struct DiaryEntry {
     path: String,
 }
 
+#[derive(Debug, Clone)]
+struct DailySummaryRow {
+    date: String,
+    summary: String,
+}
+
 fn cmd_get_diary(
     memory_dir: &Path,
     period: Option<String>,
     limit: Option<usize>,
+    detail: bool,
+    all: bool,
     json: bool,
 ) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
@@ -847,7 +873,28 @@ fn cmd_get_diary(
         }
         entries = filtered;
     }
-    let effective_limit = limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 });
+
+    let summary_mode = !json
+        && !detail
+        && !all
+        && matches!(period.as_deref().map(|s| s.to_ascii_lowercase()), Some(p) if p == "week");
+    if summary_mode {
+        let summaries = collect_diary_daily_summaries(memory_dir, "week", limit)?;
+        println!("Owner Diary:");
+        if summaries.is_empty() {
+            println!("(none)");
+        }
+        for row in summaries {
+            println!("- [{}] {}", row.date, row.summary);
+        }
+        return Ok(());
+    }
+
+    let effective_limit = if all {
+        usize::MAX
+    } else {
+        limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 })
+    };
     entries.truncate(effective_limit);
 
     if json {
@@ -864,6 +911,47 @@ fn cmd_get_diary(
     Ok(())
 }
 
+fn collect_diary_daily_summaries(
+    memory_dir: &Path,
+    period: &str,
+    limit: Option<usize>,
+) -> Result<Vec<DailySummaryRow>> {
+    validate_period(period)?;
+    let today = Local::now().date_naive();
+    let mut per_date: HashMap<NaiveDate, String> = HashMap::new();
+    for rel in memory_files(memory_dir)? {
+        let rel_text = rel.to_string_lossy();
+        if !rel_text.starts_with("owner/diary/") {
+            continue;
+        }
+        let Some(date) = activity_date_from_rel(&rel) else {
+            continue;
+        };
+        if !date_matches_period(date, period)? {
+            continue;
+        }
+        let path = memory_dir.join(&rel);
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let (summary, body) = parse_daily_frontmatter_and_body(&content);
+        let resolved = resolve_daily_summary(summary.as_deref(), &body, date, today);
+        if resolved.is_empty() {
+            continue;
+        }
+        per_date.entry(date).or_insert(resolved);
+    }
+
+    let mut rows: Vec<(NaiveDate, String)> = per_date.into_iter().collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.truncate(limit.unwrap_or(7));
+    Ok(rows
+        .into_iter()
+        .map(|(date, summary)| DailySummaryRow {
+            date: date.format("%Y-%m-%d").to_string(),
+            summary,
+        })
+        .collect())
+}
+
 fn collect_diary_entries(memory_dir: &Path) -> Result<Vec<DiaryEntry>> {
     let mut out = Vec::new();
     for rel in memory_files(memory_dir)? {
@@ -876,7 +964,8 @@ fn collect_diary_entries(memory_dir: &Path) -> Result<Vec<DiaryEntry>> {
         };
         let path = memory_dir.join(&rel);
         let content = fs::read_to_string(&path).unwrap_or_default();
-        for line in content.lines() {
+        let (_, body) = parse_daily_frontmatter_and_body(&content);
+        for line in body.lines() {
             if let Some(entry) = parse_diary_line(&date, line, &rel_text) {
                 out.push(entry);
             }
@@ -930,6 +1019,8 @@ fn cmd_get_acts(
     memory_dir: &Path,
     period: Option<String>,
     limit: Option<usize>,
+    detail: bool,
+    all: bool,
     json: bool,
 ) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
@@ -944,7 +1035,28 @@ fn cmd_get_acts(
         }
         entries = filtered;
     }
-    let effective_limit = limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 });
+
+    let summary_mode = !json
+        && !detail
+        && !all
+        && matches!(period.as_deref().map(|s| s.to_ascii_lowercase()), Some(p) if p == "week");
+    if summary_mode {
+        let summaries = collect_activity_daily_summaries(memory_dir, "week", limit)?;
+        println!("Agent Activities:");
+        if summaries.is_empty() {
+            println!("(none)");
+        }
+        for row in summaries {
+            println!("- [{}] {}", row.date, row.summary);
+        }
+        return Ok(());
+    }
+
+    let effective_limit = if all {
+        usize::MAX
+    } else {
+        limit.unwrap_or_else(|| if period.is_some() { usize::MAX } else { 10 })
+    };
     entries.truncate(effective_limit);
 
     if json {
@@ -965,6 +1077,61 @@ fn cmd_get_acts(
     Ok(())
 }
 
+fn collect_activity_daily_summaries(
+    memory_dir: &Path,
+    period: &str,
+    limit: Option<usize>,
+) -> Result<Vec<DailySummaryRow>> {
+    validate_period(period)?;
+    let today = Local::now().date_naive();
+    let mut per_date: HashMap<NaiveDate, (u8, String)> = HashMap::new();
+    for rel in memory_files(memory_dir)? {
+        let rel_text = rel.to_string_lossy();
+        if !rel_text.starts_with("agent/activity/") && !rel_text.starts_with("activity/") {
+            continue;
+        }
+        let Some(date) = activity_date_from_rel(&rel) else {
+            continue;
+        };
+        if !date_matches_period(date, period)? {
+            continue;
+        }
+        let path = memory_dir.join(&rel);
+        let content = fs::read_to_string(path).unwrap_or_default();
+        let (summary, body) = parse_daily_frontmatter_and_body(&content);
+        let resolved = resolve_daily_summary(summary.as_deref(), &body, date, today);
+        if resolved.is_empty() {
+            continue;
+        }
+
+        let priority = if rel_text.starts_with("agent/activity/") {
+            0
+        } else {
+            1
+        };
+        match per_date.get(&date) {
+            Some((existing_priority, _)) if *existing_priority <= priority => {}
+            _ => {
+                per_date.insert(date, (priority, resolved));
+            }
+        }
+    }
+
+    let mut rows: Vec<(NaiveDate, String)> = per_date
+        .into_iter()
+        .map(|(date, (_, summary))| (date, summary))
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.truncate(limit.unwrap_or(7));
+    Ok(rows
+        .into_iter()
+        .map(|(date, summary)| DailySummaryRow {
+            date: date.format("%Y-%m-%d").to_string(),
+            summary,
+        })
+        .collect())
+}
+
 fn collect_activity_entries(memory_dir: &Path) -> Result<Vec<ActivityEntry>> {
     let mut out = Vec::new();
     for rel in memory_files(memory_dir)? {
@@ -977,7 +1144,8 @@ fn collect_activity_entries(memory_dir: &Path) -> Result<Vec<ActivityEntry>> {
         };
         let path = memory_dir.join(&rel);
         let content = fs::read_to_string(&path).unwrap_or_default();
-        for line in content.lines() {
+        let (_, body) = parse_daily_frontmatter_and_body(&content);
+        for line in body.lines() {
             if let Some(entry) = parse_activity_line(&date, line, &rel_text) {
                 out.push(entry);
             }
@@ -1374,6 +1542,172 @@ fn append_markdown_line(path: &Path, line: &str) -> Result<()> {
     file.write_all(b"\n")
         .with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
     Ok(())
+}
+
+fn append_daily_line_with_frontmatter(
+    path: &Path,
+    target_date: NaiveDate,
+    line: &str,
+) -> Result<()> {
+    ensure_parent(path)?;
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let (summary, mut body) = parse_daily_frontmatter_and_body(&content);
+
+    if !body.trim().is_empty() && !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str(line.trim_end());
+    body.push('\n');
+
+    let today = Local::now().date_naive();
+    let resolved_summary = if target_date < today {
+        resolve_daily_summary(summary.as_deref(), &body, target_date, today)
+    } else {
+        summary.unwrap_or_default()
+    };
+    let rendered = render_daily_markdown_with_frontmatter(&resolved_summary, &body);
+    fs::write(path, rendered)
+        .with_context(|| format!("failed to write {}", path.to_string_lossy()))?;
+    Ok(())
+}
+
+fn parse_daily_frontmatter_and_body(content: &str) -> (Option<String>, String) {
+    let normalized = content.replace("\r\n", "\n");
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    if lines.first().copied() != Some("---") {
+        return (None, normalized);
+    }
+
+    let mut summary = None;
+    for idx in 1..lines.len() {
+        let line = lines[idx];
+        if line == "---" {
+            let body = lines[idx + 1..].join("\n");
+            return (summary, body);
+        }
+        if let Some(raw) = line.trim().strip_prefix("summary:") {
+            summary = Some(parse_simple_yaml_scalar(raw.trim()));
+        }
+    }
+    (None, normalized)
+}
+
+fn parse_simple_yaml_scalar(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].replace("''", "'");
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let mut out = String::new();
+        let mut escaped = false;
+        for ch in inner.chars() {
+            if escaped {
+                out.push(match ch {
+                    'n' => '\n',
+                    't' => '\t',
+                    '"' => '"',
+                    '\\' => '\\',
+                    other => other,
+                });
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else {
+                out.push(ch);
+            }
+        }
+        if escaped {
+            out.push('\\');
+        }
+        return out;
+    }
+    trimmed.to_string()
+}
+
+fn render_daily_markdown_with_frontmatter(summary: &str, body: &str) -> String {
+    let normalized_summary = collapse_inline_whitespace(summary);
+    let encoded_summary = normalized_summary
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let mut out = format!("---\nsummary: \"{}\"\n---\n", encoded_summary);
+    if !body.is_empty() {
+        out.push_str(body);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn resolve_daily_summary(
+    frontmatter_summary: Option<&str>,
+    body: &str,
+    date: NaiveDate,
+    today: NaiveDate,
+) -> String {
+    let raw = frontmatter_summary.unwrap_or("").trim();
+    if !raw.is_empty() {
+        return raw.to_string();
+    }
+    if date < today {
+        return derive_summary_from_body(body);
+    }
+    String::new()
+}
+
+fn derive_summary_from_body(body: &str) -> String {
+    let mut parts = Vec::new();
+    for line in body.lines() {
+        let Some(text) = extract_summary_text_from_bullet_line(line) else {
+            continue;
+        };
+        if parts.contains(&text) {
+            continue;
+        }
+        parts.push(text);
+        if parts.len() >= 3 {
+            break;
+        }
+    }
+    let mut summary = match parts.len() {
+        0 => String::new(),
+        1 => parts[0].clone(),
+        2 => format!("{} / {}", parts[0], parts[1]),
+        _ => format!("{} / {} など", parts[0], parts[1]),
+    };
+
+    if summary.chars().count() > 90 {
+        summary = format!("{}...", summary.chars().take(87).collect::<String>());
+    }
+    summary
+}
+
+fn extract_summary_text_from_bullet_line(line: &str) -> Option<String> {
+    let body = line.trim().strip_prefix("- ")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut rest = body;
+    if rest.len() >= 5 && is_hhmm(&rest[..5]) {
+        rest = rest[5..].trim_start();
+    }
+    if let Some(after_open) = rest.strip_prefix('[') {
+        if let Some(end) = after_open.find(']') {
+            rest = after_open[end + 1..].trim_start();
+        }
+    }
+
+    let text = collapse_inline_whitespace(rest);
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn collapse_inline_whitespace(raw: &str) -> String {
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn short_task_hash(text: &str) -> String {
@@ -2286,7 +2620,8 @@ fn read_daily_activity_summary(memory_dir: &Path, date: NaiveDate) -> String {
         legacy_activity_path(memory_dir, date),
     ] {
         if let Ok(content) = fs::read_to_string(path) {
-            for line in content.lines() {
+            let (_, body) = parse_daily_frontmatter_and_body(&content);
+            for line in body.lines() {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
                     lines.push(trimmed.to_string());
@@ -2299,10 +2634,9 @@ fn read_daily_activity_summary(memory_dir: &Path, date: NaiveDate) -> String {
 
 fn read_daily_owner_diary(memory_dir: &Path, date: NaiveDate) -> String {
     let path = owner_diary_path(memory_dir, date);
-    fs::read_to_string(path)
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let (_, body) = parse_daily_frontmatter_and_body(&content);
+    body.trim().to_string()
 }
 
 fn dedup_keep_order(lines: Vec<String>) -> Vec<String> {

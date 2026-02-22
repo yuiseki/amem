@@ -115,6 +115,7 @@ fn keep_appends_to_activity_log() {
 
     let activity = tmp.child(".amem/agent/activity/2026/02/2026-02-21.md");
     activity.assert(predicate::path::exists());
+    activity.assert(predicate::str::starts_with("---\nsummary: "));
     activity.assert(predicate::str::contains("Went for a walk"));
 }
 
@@ -215,6 +216,38 @@ fn default_command_runs_today() {
         .stdout(predicate::str::contains("== Agent Activities =="))
         .stdout(predicate::str::contains("== Owner Preferences ==").not())
         .stdout(predicate::str::contains("finish amem"));
+}
+
+#[test]
+fn default_command_hides_frontmatter_lines_from_daily_sections() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yyyy = today.format("%Y").to_string();
+    let mm = today.format("%m").to_string();
+    let ymd = today.format("%Y-%m-%d").to_string();
+
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: yuiseki\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("---\nsummary: \"diary summary\"\n---\n- 09:50 diary entry\n")
+        .unwrap();
+    tmp.child(".amem/agent/tasks/open.md")
+        .write_str("- finish amem\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("---\nsummary: \"activity summary\"\n---\n- 10:00 [codex] started coding\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path());
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("diary entry"))
+        .stdout(predicate::str::contains("started coding"))
+        .stdout(predicate::str::contains("summary: ").not())
+        .stdout(predicate::str::contains("\n---\n").not());
 }
 
 #[test]
@@ -388,6 +421,7 @@ fn set_diary_writes_owner_diary_with_explicit_date_and_time() {
 
     tmp.child(".amem/owner/diary/2026/02/2026-02-20.md")
         .assert(predicate::path::exists())
+        .assert(predicate::str::starts_with("---\nsummary: "))
         .assert(predicate::str::contains(
             "19:56 Uber Eatsで「マジックの道」で「Magic豚ラーメン(豚3枚)」を注文",
         ));
@@ -412,7 +446,12 @@ fn set_diary_uses_today_and_now_when_date_time_omitted() {
     let diary_path = tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"));
     diary_path.assert(predicate::path::exists());
     let content = fs::read_to_string(diary_path.path()).unwrap();
-    let line = content.lines().next().unwrap_or("");
+    assert!(content.starts_with("---\nsummary: "));
+    assert!(content.contains("summary: \"\""));
+    let line = content
+        .lines()
+        .find(|line| line.starts_with("- "))
+        .unwrap_or("");
     assert!(line.starts_with("- "));
     assert!(line.contains(" 散歩した"));
     let mut parts = line.split_whitespace();
@@ -466,7 +505,7 @@ fn get_diary_week_shows_full_window_by_default() {
     let y_mm = yesterday.format("%m").to_string();
     let y_ymd = yesterday.format("%Y-%m-%d").to_string();
 
-    let mut today_lines = String::new();
+    let mut today_lines = String::from("---\nsummary: \"\"\n---\n");
     for i in 0..12 {
         today_lines.push_str(&format!("- 08:{:02} today-{}\n", i, i));
     }
@@ -474,7 +513,7 @@ fn get_diary_week_shows_full_window_by_default() {
         .write_str(&today_lines)
         .unwrap();
     tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
-        .write_str("- 07:00 yesterday-visible\n")
+        .write_str("---\nsummary: \"yesterday-visible\"\n---\n- 07:00 yesterday-entry\n")
         .unwrap();
 
     let mut cmd = bin();
@@ -485,7 +524,44 @@ fn get_diary_week_shows_full_window_by_default() {
         .arg("week");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("yesterday-visible"));
+        .stdout(predicate::str::contains(format!(
+            "- [{y_ymd}] yesterday-visible"
+        )))
+        .stdout(predicate::str::contains("today-0").not())
+        .stdout(predicate::str::contains("yesterday-entry").not());
+}
+
+#[test]
+fn get_diary_week_detail_shows_full_entries() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"\"\n---\n- 08:00 today-entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("---\nsummary: \"yesterday summary\"\n---\n- 07:00 yesterday-entry\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("diary")
+        .arg("week")
+        .arg("--detail");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("today-entry"))
+        .stdout(predicate::str::contains("yesterday-entry"))
+        .stdout(predicate::str::contains(format!("- [{y_ymd}] yesterday summary")).not());
 }
 
 #[test]
@@ -596,7 +672,7 @@ fn get_acts_week_shows_full_window_by_default() {
     let y_mm = yesterday.format("%m").to_string();
     let y_ymd = yesterday.format("%Y-%m-%d").to_string();
 
-    let mut today_lines = String::new();
+    let mut today_lines = String::from("---\nsummary: \"\"\n---\n");
     for i in 0..12 {
         today_lines.push_str(&format!("- 08:{:02} [codex] today-{}\n", i, i));
     }
@@ -604,7 +680,7 @@ fn get_acts_week_shows_full_window_by_default() {
         .write_str(&today_lines)
         .unwrap();
     tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
-        .write_str("- 07:00 [codex] yesterday-visible\n")
+        .write_str("---\nsummary: \"yesterday-visible\"\n---\n- 07:00 [codex] yesterday-entry\n")
         .unwrap();
 
     let mut cmd = bin();
@@ -615,7 +691,44 @@ fn get_acts_week_shows_full_window_by_default() {
         .arg("week");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("yesterday-visible"));
+        .stdout(predicate::str::contains(format!(
+            "- [{y_ymd}] yesterday-visible"
+        )))
+        .stdout(predicate::str::contains("today-0").not())
+        .stdout(predicate::str::contains("yesterday-entry").not());
+}
+
+#[test]
+fn get_acts_week_detail_shows_full_entries() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    tmp.child(format!(".amem/agent/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("---\nsummary: \"\"\n---\n- 08:00 [codex] today-entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("---\nsummary: \"yesterday summary\"\n---\n- 07:00 [codex] yesterday-entry\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("get")
+        .arg("acts")
+        .arg("week")
+        .arg("--detail");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("today-entry"))
+        .stdout(predicate::str::contains("yesterday-entry"))
+        .stdout(predicate::str::contains(format!("- [{y_ymd}] yesterday summary")).not());
 }
 
 #[test]

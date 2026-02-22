@@ -18,8 +18,13 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 ### 2. Phase 1 domains
 - `diary`
   - `amem get diary [today|yesterday|week|yyyy-mm-dd]`
+    - `week` default: show daily summaries only (max 7 lines)
+    - `--detail` / `--all`: show full diary entries
   - `amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]`
   - write target: `owner/diary/YYYY/MM/YYYY-MM-DD.md`
+  - daily file format:
+    - YAML frontmatter with `summary` (one-line summary)
+    - bullet list body (`- HH:MM ...`)
 - `owner`
   - `amem get owner`
   - `amem get owner <key|alias>`
@@ -28,6 +33,8 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
   - `amem set owner preference <key:value>` (auto timestamp)
 - `acts`
   - `amem get acts [today|yesterday|week|yyyy-mm-dd]`
+    - `week` default: show daily summaries only (max 7 lines)
+    - `--detail` / `--all`: show full activity entries
   - `amem set acts <text>`
 - `tasks`
   - `amem get tasks [today|yesterday|week|yyyy-mm-dd]`
@@ -52,7 +59,8 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 - `week` means the trailing 7-day window including today.
 - For `get diary/acts/tasks`, default result size is:
   - latest 10 entries when period is omitted
-  - all matching entries when period is specified
+  - all matching entries when period is `today|yesterday|yyyy-mm-dd`
+  - for `get diary week` / `get acts week`: daily summaries only (max 7 lines)
 - For `set diary`, `--date` defaults to today and `--time` defaults to current local time.
 
 ## Consequences

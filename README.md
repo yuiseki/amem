@@ -136,9 +136,13 @@ Domain-oriented read commands:
 `get diary/acts/tasks` options:
 
 - `--limit <n>`
+- `--detail` (`get diary`/`get acts`): show full entries
+- `--all` (`get diary`/`get acts`): show full entries (ignore default summary mode)
 - default behavior:
   - without period: latest 10 entries
-  - with period (`today|yesterday|week|yyyy-mm-dd`): all matching entries
+  - with period `today|yesterday|yyyy-mm-dd`: all matching entries
+  - with period `week` on `diary`/`acts`: daily summary only (max 7 lines)
+    - use `--detail` or `--all` to show full entries
 
 ### `amem set ...`
 
@@ -225,10 +229,14 @@ Scaffold created by `amem init`:
 - `owner/preferences.md`
 - `owner/interests.md`
 - `owner/diary/YYYY/MM/YYYY-MM-DD.md` (created on first diary write)
+  - YAML frontmatter:
+    - `summary`: one-line daily summary (empty is allowed for today)
 - `agent/tasks/open.md`
 - `agent/tasks/done.md`
 - `agent/inbox/captured.md`
 - `agent/activity/YYYY/MM/YYYY-MM-DD.md` (created on first write)
+  - YAML frontmatter:
+    - `summary`: one-line daily summary (empty is allowed for today)
 
 Compatibility:
 
