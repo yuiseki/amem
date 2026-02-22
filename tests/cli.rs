@@ -366,6 +366,58 @@ fn set_owner_updates_profile_and_preferences() {
 }
 
 #[test]
+fn set_diary_writes_owner_diary_with_explicit_date_and_time() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("set")
+        .arg("diary")
+        .arg("Uber Eatsで「マジックの道」で「Magic豚ラーメン(豚3枚)」を注文")
+        .arg("--date")
+        .arg("2026-02-20")
+        .arg("--time")
+        .arg("19:56");
+    cmd.assert().success();
+
+    tmp.child(".amem/owner/diary/2026/02/2026-02-20.md")
+        .assert(predicate::path::exists())
+        .assert(predicate::str::contains(
+            "19:56 Uber Eatsで「マジックの道」で「Magic豚ラーメン(豚3枚)」を注文",
+        ));
+}
+
+#[test]
+fn set_diary_uses_today_and_now_when_date_time_omitted() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yyyy = today.format("%Y").to_string();
+    let mm = today.format("%m").to_string();
+    let ymd = today.format("%Y-%m-%d").to_string();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("set")
+        .arg("diary")
+        .arg("散歩した");
+    cmd.assert().success();
+
+    let diary_path = tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"));
+    diary_path.assert(predicate::path::exists());
+    let content = fs::read_to_string(diary_path.path()).unwrap();
+    let line = content.lines().next().unwrap_or("");
+    assert!(line.starts_with("- "));
+    assert!(line.contains(" 散歩した"));
+    let mut parts = line.split_whitespace();
+    let _dash = parts.next();
+    let time = parts.next().unwrap_or("");
+    assert_eq!(time.len(), 5);
+    assert_eq!(time.chars().nth(2), Some(':'));
+}
+
+#[test]
 fn set_owner_without_target_fails() {
     let tmp = assert_fs::TempDir::new().unwrap();
 

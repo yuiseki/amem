@@ -27,6 +27,7 @@ Adopt a namespace split under `.amem`:
   - `.amem/agent/inbox/captured.md`
 
 `amem init` creates the new namespace-oriented scaffold by default.
+`amem set diary` writes owner life logs into `owner/diary/YYYY/MM/YYYY-MM-DD.md`.
 
 ## Compatibility
 - Legacy paths are still read for compatibility:

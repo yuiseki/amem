@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use clap::{Parser, Subcommand};
 use globset::{Glob, GlobSetBuilder};
 use path_clean::PathClean;
@@ -146,6 +146,13 @@ pub enum GetTarget {
 
 #[derive(Debug, Subcommand)]
 pub enum SetTarget {
+    Diary {
+        text: String,
+        #[arg(long)]
+        date: Option<String>,
+        #[arg(long)]
+        time: Option<String>,
+    },
     Owner {
         target: Option<String>,
         #[arg(value_name = "VALUE", trailing_var_arg = true)]
@@ -596,6 +603,7 @@ fn cmd_get(memory_dir: &Path, target: GetTarget, json: bool) -> Result<()> {
 fn cmd_set(memory_dir: &Path, target: SetTarget, json: bool) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
     match target {
+        SetTarget::Diary { text, date, time } => cmd_set_diary(memory_dir, &text, date, time, json),
         SetTarget::Owner { target, value } => cmd_set_owner(memory_dir, target, value, json),
         SetTarget::Acts { text, date, source } => {
             let joined = text.join(" ");
@@ -603,6 +611,38 @@ fn cmd_set(memory_dir: &Path, target: SetTarget, json: bool) -> Result<()> {
         }
         SetTarget::Tasks { args } => cmd_set_tasks(memory_dir, args, json),
     }
+}
+
+fn cmd_set_diary(
+    memory_dir: &Path,
+    text: &str,
+    date: Option<String>,
+    time: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let entry = text.trim();
+    if entry.is_empty() {
+        bail!("missing diary text. use: amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]");
+    }
+
+    let target_date = parse_or_today(date.as_deref())?;
+    let target_time = parse_or_now_time(time.as_deref())?;
+    let path = owner_diary_path(memory_dir, target_date);
+    append_markdown_line(&path, &format!("- {} {}", target_time, entry))?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": rel_or_abs(memory_dir, &path),
+                "date": target_date.to_string(),
+                "time": target_time,
+            }))?
+        );
+    } else {
+        println!("{}", rel_or_abs(memory_dir, &path));
+    }
+    Ok(())
 }
 
 fn cmd_get_owner(memory_dir: &Path, target: Option<String>, json: bool) -> Result<()> {
@@ -2018,6 +2058,16 @@ fn parse_or_today(raw: Option<&str>) -> Result<NaiveDate> {
     }
 }
 
+fn parse_or_now_time(raw: Option<&str>) -> Result<String> {
+    match raw {
+        Some(s) => Ok(NaiveTime::parse_from_str(s, "%H:%M")
+            .with_context(|| format!("invalid time format: {s}, expected HH:MM (24-hour)"))?
+            .format("%H:%M")
+            .to_string()),
+        None => Ok(Local::now().format("%H:%M").to_string()),
+    }
+}
+
 fn activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
     agent_activity_path(memory_dir, date)
 }
@@ -2039,6 +2089,20 @@ fn agent_activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
 fn legacy_activity_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
     memory_dir
         .join("activity")
+        .join(format!("{:04}", date.year()))
+        .join(format!("{:02}", date.month()))
+        .join(format!(
+            "{:04}-{:02}-{:02}.md",
+            date.year(),
+            date.month(),
+            date.day()
+        ))
+}
+
+fn owner_diary_path(memory_dir: &Path, date: NaiveDate) -> PathBuf {
+    memory_dir
+        .join("owner")
+        .join("diary")
         .join(format!("{:04}", date.year()))
         .join(format!("{:02}", date.month()))
         .join(format!(

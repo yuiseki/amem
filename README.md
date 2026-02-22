@@ -142,6 +142,7 @@ Domain-oriented read commands:
 
 Domain-oriented write commands:
 
+- `amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]` (owner diary)
 - `amem set owner <key> <value>`
 - `amem set owner preference <key:value>` (auto timestamp)
 - `amem set acts <text>`
@@ -221,7 +222,7 @@ Scaffold created by `amem init`:
 - `owner/personality.md`
 - `owner/preferences.md`
 - `owner/interests.md`
-- `owner/diary/`
+- `owner/diary/YYYY/MM/YYYY-MM-DD.md` (created on first diary write)
 - `agent/tasks/open.md`
 - `agent/tasks/done.md`
 - `agent/inbox/captured.md`

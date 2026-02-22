@@ -16,6 +16,9 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 - Preserve existing commands for backward compatibility (`today`, `keep`, `list`, `search`, etc).
 
 ### 2. Phase 1 domains
+- `diary`
+  - `amem set diary <text> [--date yyyy-mm-dd] [--time HH:MM]`
+  - write target: `owner/diary/YYYY/MM/YYYY-MM-DD.md`
 - `owner`
   - `amem get owner`
   - `amem get owner <key|alias>`
@@ -49,6 +52,7 @@ Introduce a domain-oriented command surface with `get`/`set` as first-class entr
 - For `get acts/tasks`, default result size is:
   - latest 10 entries when period is omitted
   - all matching entries when period is specified
+- For `set diary`, `--date` defaults to today and `--time` defaults to current local time.
 
 ## Consequences
 - Improves usability for interactive assistant workflows.
