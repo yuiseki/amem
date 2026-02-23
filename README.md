@@ -10,6 +10,34 @@ Local memory CLI for AI assistant or AI agent workflows.
 - optional SQLite indexing (`index`)
 - bridge commands for coding agents (`codex`, `gemini`, `claude`, `copilot`, `opencode`)
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph mem["~/.amem (memory root)"]
+        profile["owner/profile.md"]
+        diary["owner/diary/YYYY/MM/"]
+        activity["agent/activity/YYYY/MM/"]
+        tasks["agent/tasks/open.md"]
+        memories["agent/memory/P0/"]
+        index[".index/index.db"]
+    end
+
+    cli["amem CLI"]
+    ai["AI agent\n(yuiclaw / acore)"]
+    user["User / scripts"]
+
+    user -->|"amem keep"| cli
+    user -->|"amem search"| cli
+    ai -->|"amem today --json"| cli
+    ai -->|"amem keep ... --source codex"| cli
+    cli -->|reads/writes| mem
+    cli -->|"amem index"| index
+    index -->|"amem search"| cli
+```
+
+`amem today --json` is the primary interface used by `acore` during agent session initialization. It returns a JSON snapshot containing owner profile, agent soul, recent activities, and P0 memories, which are injected into the seed prompt for every AI session.
+
 ## Install
 
 Build and install from source:
