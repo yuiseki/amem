@@ -213,7 +213,6 @@ fn default_command_runs_today() {
     cmd.current_dir(tmp.path());
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Today Snapshot"))
         .stdout(predicate::str::contains("== Owner Diary =="))
         .stdout(predicate::str::contains("diary entry"))
         .stdout(predicate::str::contains("== Agent Tasks =="))
@@ -892,7 +891,7 @@ fn codex_subcommand_seeds_then_resumes_last() {
 set -eu
 case "${1:-}" in
   exec)
-    if [[ "$*" == *"Today Snapshot ("* ]]; then
+    if [[ "$*" == *"== Owner Profile =="* ]]; then
       if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
         echo "exec markdown yolo" >> "$AMEM_MOCK_CODEX_LOG"
       else
@@ -1004,7 +1003,7 @@ set -eu
 if [[ "$*" == *"--resume"* ]]; then
   echo "resume $*" >> "$AMEM_MOCK_GEMINI_LOG"
 else
-  if [[ "$*" == *"Today Snapshot ("* ]]; then
+  if [[ "$*" == *"== Owner Profile =="* ]]; then
     if [[ "$*" == *"--approval-mode yolo"* ]]; then
       echo "seed markdown yolo" >> "$AMEM_MOCK_GEMINI_LOG"
     else
@@ -1110,7 +1109,7 @@ fn claude_subcommand_seeds_then_resumes_with_session_id() {
         r#"#!/usr/bin/env bash
 set -eu
 if [[ "$*" == *"--print"* ]]; then
-    if [[ "$*" == *"Today Snapshot ("* ]]; then
+    if [[ "$*" == *"== Owner Profile =="* ]]; then
       if [[ "$*" == *"--dangerously-skip-permissions"* ]]; then
         echo "seed markdown yolo" >> "$AMEM_MOCK_CLAUDE_LOG"
       else
@@ -1220,7 +1219,7 @@ if [[ "$*" == *"--resume"* ]]; then
     echo "resume $*" >> "$AMEM_MOCK_COPILOT_LOG"
 elif [[ "$*" == *"--continue"* ]]; then
     echo "continue $*" >> "$AMEM_MOCK_COPILOT_LOG"
-elif [[ "$*" == *"Today Snapshot ("* ]]; then
+elif [[ "$*" == *"== Owner Profile =="* ]]; then
     if [[ "$*" == *"--allow-all"* ]]; then
       echo "seed markdown yolo" >> "$AMEM_MOCK_COPILOT_LOG"
     else
@@ -1317,7 +1316,7 @@ fn opencode_subcommand_seeds_then_resumes_with_session_id() {
         r#"#!/usr/bin/env bash
 set -eu
 if [[ "${1:-}" == "run" ]]; then
-    if [[ "$*" == *"Today Snapshot ("* ]]; then
+    if [[ "$*" == *"== Owner Profile =="* ]]; then
       if [[ "$*" == *"--format json"* && "$*" == *"--agent build"* ]]; then
         echo "seed markdown json yolo perm:$OPENCODE_PERMISSION cfg:$OPENCODE_CONFIG_CONTENT" >> "$AMEM_MOCK_OPENCODE_LOG"
       else

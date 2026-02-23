@@ -14,8 +14,12 @@ use std::process::Command as ProcessCommand;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
-const TEMPLATE_IDENTITY: &str = include_str!("templates/IDENTITY.md");
-const TEMPLATE_SOUL: &str = include_str!("templates/SOUL.md");
+const TEMPLATE_IDENTITY: &str = include_str!("templates/agent/IDENTITY.md");
+const TEMPLATE_SOUL: &str = include_str!("templates/agent/SOUL.md");
+const TEMPLATE_OWNER_PROFILE: &str = include_str!("templates/owner/profile.md");
+const TEMPLATE_OWNER_PERSONALITY: &str = include_str!("templates/owner/personality.md");
+const TEMPLATE_OWNER_PREFERENCES: &str = include_str!("templates/owner/preferences.md");
+const TEMPLATE_OWNER_INTERESTS: &str = include_str!("templates/owner/interests.md");
 
 #[derive(Debug, Parser)]
 #[command(
@@ -208,12 +212,19 @@ struct SearchHit {
 struct TodayJson {
     date: String,
     agent_identity: String,
+    agent_identity_path: String,
     agent_soul: String,
+    agent_soul_path: String,
     owner_profile: String,
+    owner_profile_path: String,
     owner_preferences: String,
+    owner_preferences_path: String,
     owner_diary: String,
+    owner_diary_path: String,
     open_tasks: String,
+    open_tasks_paths: Vec<String>,
     activity: String,
+    activity_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -383,19 +394,19 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
         (memory_dir.join("agent").join("SOUL.md"), TEMPLATE_SOUL),
         (
             memory_dir.join("owner").join("profile.md"),
-            "# Owner Profile\n\nname: \ngithub_username: \nlocation: \noccupation: \nnative_language: \n",
+            TEMPLATE_OWNER_PROFILE,
         ),
         (
             memory_dir.join("owner").join("personality.md"),
-            "# Owner Personality\n\n- \n",
+            TEMPLATE_OWNER_PERSONALITY,
         ),
         (
             memory_dir.join("owner").join("preferences.md"),
-            "# Owner Preferences\n\n- \n",
+            TEMPLATE_OWNER_PREFERENCES,
         ),
         (
             memory_dir.join("owner").join("interests.md"),
-            "# Owner Interests\n\n- \n",
+            TEMPLATE_OWNER_INTERESTS,
         ),
         (
             memory_dir.join("agent").join("tasks").join("open.md"),
@@ -816,12 +827,12 @@ fn cmd_set_owner(
 
     let mut replaced = false;
     for line in &mut lines {
-        if line.starts_with(&format!("{key}:"))
-            || (key == "github_username" && line.starts_with("github_handle:"))
-        {
-            *line = format!("{key}: {value}");
-            replaced = true;
-            break;
+        if let Some(existing_val) = owner_profile_value(line, key) {
+            if let Some(val_pos) = line.rfind(&existing_val) {
+                *line = format!("{} {}", &line[..val_pos].trim_end(), value);
+                replaced = true;
+                break;
+            }
         }
     }
     if !replaced {
@@ -1764,27 +1775,76 @@ fn is_hhmm(raw: &str) -> bool {
 fn canonical_owner_key(raw: &str) -> Option<&'static str> {
     match raw.trim().to_lowercase().as_str() {
         "name" => Some("name"),
+        "what_to_call_them" | "call" | "nickname" => Some("what_to_call_them"),
+        "pronouns" => Some("pronouns"),
+        "timezone" | "tz" => Some("timezone"),
+        "language" | "native_language" | "lang" => Some("native_language"),
         "github_username" | "github" | "github_handle" => Some("github_username"),
         "email" => Some("email"),
         "location" => Some("location"),
         "occupation" | "job" => Some("occupation"),
-        "native_language" | "lang" => Some("native_language"),
         "birthday" => Some("birthday"),
         _ => None,
     }
 }
 
 fn owner_profile_value(content: &str, key: &str) -> Option<String> {
-    let mut aliases = vec![key];
-    if key == "github_username" {
-        aliases.push("github_handle");
+    let mut aliases = vec![key.to_string()];
+    match key {
+        "name" => {
+            aliases.push("Name".to_string());
+            aliases.push("**Name**".to_string());
+            aliases.push("**Name:**".to_string());
+        }
+        "what_to_call_them" => {
+            aliases.push("What to call them".to_string());
+            aliases.push("**What to call them**".to_string());
+            aliases.push("**What to call them:**".to_string());
+        }
+        "pronouns" => {
+            aliases.push("Pronouns".to_string());
+            aliases.push("**Pronouns**".to_string());
+            aliases.push("**Pronouns:**".to_string());
+        }
+        "timezone" => {
+            aliases.push("Timezone".to_string());
+            aliases.push("**Timezone**".to_string());
+            aliases.push("**Timezone:**".to_string());
+        }
+        "native_language" => {
+            aliases.push("Language".to_string());
+            aliases.push("**Language**".to_string());
+            aliases.push("**Language:**".to_string());
+            aliases.push("native_language".to_string());
+        }
+        "github_username" => {
+            aliases.push("github_handle".to_string());
+        }
+        _ => {}
     }
+    aliases.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
     for line in content.lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
         for alias in &aliases {
-            let prefix = format!("{alias}:");
-            if let Some(rest) = line.strip_prefix(&prefix) {
-                return Some(rest.trim().to_string());
+            if let Some(pos) = l.find(alias) {
+                let rest = l[pos + alias.len()..].trim();
+                let mut res = if let Some(val) = rest.strip_prefix(':') {
+                    val.trim().to_string()
+                } else if alias.ends_with(':') && !rest.is_empty() {
+                    rest.to_string()
+                } else {
+                    continue;
+                };
+
+                // Clean up markdown bold markers if any
+                res = res.trim_matches('*').trim().to_string();
+                if !res.is_empty() {
+                    return Some(res);
+                }
             }
         }
     }
@@ -2615,48 +2675,118 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
     TodayJson {
         date: date.to_string(),
         agent_identity: read_body_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
+        agent_identity_path: memory_dir
+            .join("agent")
+            .join("IDENTITY.md")
+            .to_string_lossy()
+            .to_string(),
         agent_soul: read_body_or_empty(memory_dir.join("agent").join("SOUL.md")),
+        agent_soul_path: memory_dir
+            .join("agent")
+            .join("SOUL.md")
+            .to_string_lossy()
+            .to_string(),
         owner_profile: read_body_or_empty(memory_dir.join("owner").join("profile.md")),
+        owner_profile_path: memory_dir
+            .join("owner")
+            .join("profile.md")
+            .to_string_lossy()
+            .to_string(),
         owner_preferences: read_body_or_empty(memory_dir.join("owner").join("preferences.md")),
+        owner_preferences_path: memory_dir
+            .join("owner")
+            .join("preferences.md")
+            .to_string_lossy()
+            .to_string(),
         owner_diary: read_daily_owner_diary(memory_dir, date),
+        owner_diary_path: owner_diary_path(memory_dir, date).to_string_lossy().to_string(),
         open_tasks: read_open_tasks_summary(memory_dir),
+        open_tasks_paths: open_task_paths(memory_dir)
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect(),
         activity: read_daily_activity_summary(memory_dir, date),
+        activity_paths: vec![
+            agent_activity_path(memory_dir, date),
+            legacy_activity_path(memory_dir, date),
+        ]
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect(),
     }
 }
 
 fn render_today_snapshot(today: &TodayJson) -> String {
-    let mut out = format!("Today Snapshot ({})\n", today.date);
+    let mut sections = Vec::new();
 
     if !today.agent_identity.is_empty() {
-        out.push_str(&format!(
-            "\n== Agent Identity ==\n{}\n",
-            today.agent_identity
+        sections.push(format!(
+            "== Agent Identity ==\n[{}]\n{}",
+            today.agent_identity_path, today.agent_identity
         ));
     }
     if !today.agent_soul.is_empty() {
-        out.push_str(&format!("\n== Agent Soul ==\n{}\n", today.agent_soul));
+        sections.push(format!(
+            "== Agent Soul ==\n[{}]\n{}",
+            today.agent_soul_path, today.agent_soul
+        ));
     }
 
-    out.push_str(&format!(
-        "\n== Owner Profile ==\n{}",
+    sections.push(format!(
+        "== Owner Profile ==\n[{}]\n{}",
+        today.owner_profile_path,
         empty_as_na(&today.owner_profile)
     ));
+
     if has_meaningful_owner_preferences(&today.owner_preferences) {
-        out.push_str(&format!(
-            "\n\n== Owner Preferences ==\n{}",
+        sections.push(format!(
+            "== Owner Preferences ==\n[{}]\n{}",
+            today.owner_preferences_path,
             empty_as_na(&today.owner_preferences)
         ));
     }
-    out.push_str(&format!(
-        "\n\n== Owner Diary ==\n{}",
+
+    sections.push(format!(
+        "== Owner Diary ==\n[{}]\n{}",
+        today.owner_diary_path,
         empty_as_na(&today.owner_diary)
     ));
-    out.push_str(&format!(
-        "\n\n== Agent Tasks ==\n{}\n\n== Agent Activities ==\n{}",
-        empty_as_na(&today.open_tasks),
+
+    let tasks_paths = today
+        .open_tasks_paths
+        .iter()
+        .filter(|p| Path::new(p).exists())
+        .map(|p| format!("[{p}]"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sections.push(format!(
+        "== Agent Tasks ==\n{}\n{}",
+        if tasks_paths.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", tasks_paths)
+        },
+        empty_as_na(&today.open_tasks)
+    ));
+
+    let acts_paths = today
+        .activity_paths
+        .iter()
+        .filter(|p| Path::new(p).exists())
+        .map(|p| format!("[{p}]"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sections.push(format!(
+        "== Agent Activities ==\n{}\n{}",
+        if acts_paths.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", acts_paths)
+        },
         empty_as_na(&today.activity)
     ));
-    out
+
+    sections.join("\n\n")
 }
 
 fn has_meaningful_owner_preferences(content: &str) -> bool {
