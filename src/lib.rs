@@ -353,6 +353,9 @@ fn resolve_memory_dir(cwd: &Path, input: Option<PathBuf>) -> PathBuf {
 }
 
 fn default_memory_dir() -> PathBuf {
+    if let Some(root) = std::env::var_os("AMEM_ROOT").filter(|v| !v.is_empty()) {
+        return PathBuf::from(root);
+    }
     home_dir_from_env()
         .map(|home| home.join(".amem"))
         .unwrap_or_else(|| PathBuf::from(".amem"))
