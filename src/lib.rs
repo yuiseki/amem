@@ -39,7 +39,6 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Init,
-    #[command(visible_alias = "remember")]
     Search {
         query: String,
         #[arg(short = 'k', long, default_value_t = 8)]
@@ -48,6 +47,10 @@ pub enum Commands {
         lexical_only: bool,
         #[arg(long, default_value_t = false)]
         semantic_only: bool,
+    },
+    Remember {
+        #[arg(long)]
+        query: Option<String>,
     },
     #[command(visible_alias = "ls")]
     List {
@@ -102,6 +105,10 @@ pub enum Commands {
     Set {
         #[command(subcommand)]
         target: SetTarget,
+    },
+    Triage {
+        #[command(subcommand)]
+        target: TriageTarget,
     },
     Owner {
         target: Option<String>,
@@ -199,6 +206,21 @@ pub enum SetTarget {
         #[arg(value_name = "ARG", required = true, num_args = 1.., trailing_var_arg = true)]
         args: Vec<String>,
     },
+    Memory {
+        text: String,
+        #[arg(long)]
+        filename: String,
+        #[arg(long, default_value = "P3")]
+        priority: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TriageTarget {
+    Memory {
+        filename: String,
+        priority: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -225,6 +247,8 @@ struct TodayJson {
     open_tasks_paths: Vec<String>,
     activity: String,
     activity_paths: Vec<String>,
+    agent_memories: String,
+    agent_memories_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -265,6 +289,7 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
             semantic_only,
             cli.json,
         ),
+        Some(Commands::Remember { query }) => cmd_remember(&memory_dir, query, cli.json),
         Some(Commands::List {
             path,
             kind,
@@ -290,6 +315,7 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
         Some(Commands::Context { task, date }) => cmd_context(&memory_dir, &task, date, cli.json),
         Some(Commands::Get { target }) => cmd_get(&memory_dir, target, cli.json),
         Some(Commands::Set { target }) => cmd_set(&memory_dir, target, cli.json),
+        Some(Commands::Triage { target }) => cmd_triage(&memory_dir, target, cli.json),
         Some(Commands::Owner { target }) => cmd_get_owner(&memory_dir, target, cli.json),
         Some(Commands::Codex {
             resume_only,
@@ -380,6 +406,11 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
         memory_dir.join("agent").join("tasks"),
         memory_dir.join("agent").join("inbox"),
         memory_dir.join("agent").join("activity"),
+        memory_dir.join("agent").join("memory"),
+        memory_dir.join("agent").join("memory").join("P0"),
+        memory_dir.join("agent").join("memory").join("P1"),
+        memory_dir.join("agent").join("memory").join("P2"),
+        memory_dir.join("agent").join("memory").join("P3"),
     ];
     for dir in directories {
         fs::create_dir_all(&dir)
@@ -586,6 +617,163 @@ fn cmd_search(
     Ok(())
 }
 
+fn cmd_remember(memory_dir: &Path, query: Option<String>, json: bool) -> Result<()> {
+    let mut memories = Vec::new();
+    for p in ["P0", "P1", "P2", "P3"] {
+        let dir = memory_dir.join("agent").join("memory").join(p);
+        if !dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)?;
+            let (_, body) = parse_daily_frontmatter_and_body(&content);
+            memories.push(serde_json::json!({
+                "priority": p,
+                "path": rel_or_abs(memory_dir, &path),
+                "filename": path.file_name().unwrap_or_default().to_string_lossy(),
+                "content": body.trim(),
+            }));
+        }
+    }
+
+    if let Some(q) = query {
+        let q = q.to_lowercase();
+        memories.retain(|m| {
+            m["content"]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(&q)
+                || m["filename"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&q)
+        });
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&memories)?);
+    } else {
+        for m in memories {
+            println!(
+                "== {} ({}) ==\n[{}]\n{}\n",
+                m["priority"].as_str().unwrap_or_default(),
+                m["filename"].as_str().unwrap_or_default(),
+                m["path"].as_str().unwrap_or_default(),
+                m["content"].as_str().unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_set_memory(
+    memory_dir: &Path,
+    text: &str,
+    filename: &str,
+    priority: &str,
+    json: bool,
+) -> Result<()> {
+    let p = normalize_priority(priority)?;
+    let mut fname = filename.to_string();
+    if !fname.ends_with(".md") {
+        fname.push_str(".md");
+    }
+
+    if let Some(existing_path) = find_memory_file(memory_dir, &fname) {
+        bail!(
+            "memory file already exists at: {}",
+            rel_or_abs(memory_dir, &existing_path)
+        );
+    }
+
+    let target_path = memory_dir.join("agent").join("memory").join(p).join(&fname);
+    ensure_parent(&target_path)?;
+    fs::write(&target_path, text)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "path": rel_or_abs(memory_dir, &target_path),
+                "priority": p,
+                "filename": fname,
+            })
+        );
+    } else {
+        println!("{}", rel_or_abs(memory_dir, &target_path));
+    }
+    Ok(())
+}
+
+fn cmd_triage_memory(
+    memory_dir: &Path,
+    filename: &str,
+    new_priority: &str,
+    json: bool,
+) -> Result<()> {
+    let new_p = normalize_priority(new_priority)?;
+    let mut fname = filename.to_string();
+    if !fname.ends_with(".md") {
+        fname.push_str(".md");
+    }
+
+    let source_path = find_memory_file(memory_dir, &fname)
+        .ok_or_else(|| anyhow::anyhow!("memory file not found: {fname}"))?;
+    let target_path = memory_dir
+        .join("agent")
+        .join("memory")
+        .join(new_p)
+        .join(&fname);
+
+    if source_path == target_path {
+        bail!("memory is already at priority {new_p}");
+    }
+
+    ensure_parent(&target_path)?;
+    fs::rename(&source_path, &target_path)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "from": rel_or_abs(memory_dir, &source_path),
+                "to": rel_or_abs(memory_dir, &target_path),
+                "priority": new_p,
+            })
+        );
+    } else {
+        println!("{}", rel_or_abs(memory_dir, &target_path));
+    }
+    Ok(())
+}
+
+fn find_memory_file(memory_dir: &Path, filename: &str) -> Option<PathBuf> {
+    for p in ["P0", "P1", "P2", "P3"] {
+        let path = memory_dir.join("agent").join("memory").join(p).join(filename);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn normalize_priority(raw: &str) -> Result<&'static str> {
+    match raw.trim().to_uppercase().as_str() {
+        "P0" => Ok("P0"),
+        "P1" => Ok("P1"),
+        "P2" => Ok("P2"),
+        "P3" => Ok("P3"),
+        _ => bail!("invalid priority: {raw}. use P0, P1, P2, or P3"),
+    }
+}
+
 fn cmd_today(memory_dir: &Path, date: Option<String>, json: bool) -> Result<()> {
     let d = parse_or_today(date.as_deref())?;
     let today = load_today(memory_dir, d);
@@ -663,6 +851,20 @@ fn cmd_set(memory_dir: &Path, target: SetTarget, json: bool) -> Result<()> {
             cmd_keep(memory_dir, joined.trim(), "activity", date, &source, json)
         }
         SetTarget::Tasks { args } => cmd_set_tasks(memory_dir, args, json),
+        SetTarget::Memory {
+            text,
+            filename,
+            priority,
+        } => cmd_set_memory(memory_dir, &text, &filename, &priority, json),
+    }
+}
+
+fn cmd_triage(memory_dir: &Path, target: TriageTarget, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    match target {
+        TriageTarget::Memory { filename, priority } => {
+            cmd_triage_memory(memory_dir, &filename, &priority, json)
+        }
     }
 }
 
@@ -2672,6 +2874,7 @@ fn find_asdf_claude_bin() -> Option<String> {
 }
 
 fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
+    let (memories_content, memories_paths) = read_agent_memories(memory_dir);
     TodayJson {
         date: date.to_string(),
         agent_identity: read_body_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
@@ -2713,6 +2916,8 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
         .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect(),
+        agent_memories: memories_content,
+        agent_memories_paths: memories_paths,
     }
 }
 
@@ -2729,6 +2934,32 @@ fn render_today_snapshot(today: &TodayJson) -> String {
         sections.push(format!(
             "== Agent Soul ==\n[{}]\n{}",
             today.agent_soul_path, today.agent_soul
+        ));
+    }
+
+    if !today.agent_memories.is_empty() {
+        let memories_paths = today
+            .agent_memories_paths
+            .iter()
+            .filter(|p| Path::new(p).exists())
+            .map(|p| format!("[{p}]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!(
+            "== Agent Memories ==\n{}\n{}",
+            if memories_paths.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", memories_paths)
+            },
+            format!(
+                "{}\n\n_Use `amem set memory` command to keep your own memory._",
+                today.agent_memories
+            )
+        ));
+    } else {
+        sections.push(format!(
+            "== Agent Memories ==\n(none)\n\n_Use `amem set memory` command to keep your own memory._"
         ));
     }
 
@@ -2939,6 +3170,31 @@ fn read_daily_owner_diary(memory_dir: &Path, date: NaiveDate) -> String {
     let content = fs::read_to_string(path).unwrap_or_default();
     let (_, body) = parse_daily_frontmatter_and_body(&content);
     body.trim().to_string()
+}
+
+fn read_agent_memories(memory_dir: &Path) -> (String, Vec<String>) {
+    let mut all_content = Vec::new();
+    let mut all_paths = Vec::new();
+
+    let p0_dir = memory_dir.join("agent").join("memory").join("P0");
+    if let Ok(entries) = fs::read_dir(p0_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                let (_, body) = parse_daily_frontmatter_and_body(&content);
+                let trimmed = body.trim();
+                if !trimmed.is_empty() {
+                    all_content.push(format!("### {}\n{}", path.file_name().unwrap().to_string_lossy(), trimmed));
+                    all_paths.push(path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    (all_content.join("\n\n"), all_paths)
 }
 
 fn dedup_keep_order(lines: Vec<String>) -> Vec<String> {
