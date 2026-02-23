@@ -14,6 +14,9 @@ use std::process::Command as ProcessCommand;
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
+const TEMPLATE_IDENTITY: &str = include_str!("templates/IDENTITY.md");
+const TEMPLATE_SOUL: &str = include_str!("templates/SOUL.md");
+
 #[derive(Debug, Parser)]
 #[command(
     name = "amem",
@@ -375,12 +378,9 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
     let files = [
         (
             memory_dir.join("agent").join("IDENTITY.md"),
-            "# Agent Identity\n\n- \n",
+            TEMPLATE_IDENTITY,
         ),
-        (
-            memory_dir.join("agent").join("SOUL.md"),
-            "# Agent Soul\n\n- \n",
-        ),
+        (memory_dir.join("agent").join("SOUL.md"), TEMPLATE_SOUL),
         (
             memory_dir.join("owner").join("profile.md"),
             "# Owner Profile\n\nname: \ngithub_username: \nlocation: \noccupation: \nnative_language: \n",
@@ -2614,10 +2614,10 @@ fn find_asdf_claude_bin() -> Option<String> {
 fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
     TodayJson {
         date: date.to_string(),
-        agent_identity: read_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
-        agent_soul: read_or_empty(memory_dir.join("agent").join("SOUL.md")),
-        owner_profile: read_or_empty(memory_dir.join("owner").join("profile.md")),
-        owner_preferences: read_or_empty(memory_dir.join("owner").join("preferences.md")),
+        agent_identity: read_body_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
+        agent_soul: read_body_or_empty(memory_dir.join("agent").join("SOUL.md")),
+        owner_profile: read_body_or_empty(memory_dir.join("owner").join("profile.md")),
+        owner_preferences: read_body_or_empty(memory_dir.join("owner").join("preferences.md")),
         owner_diary: read_daily_owner_diary(memory_dir, date),
         open_tasks: read_open_tasks_summary(memory_dir),
         activity: read_daily_activity_summary(memory_dir, date),
@@ -2835,6 +2835,12 @@ fn read_or_empty(path: PathBuf) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+fn read_body_or_empty(path: PathBuf) -> String {
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let (_, body) = parse_daily_frontmatter_and_body(&content);
+    body.trim().to_string()
 }
 
 fn empty_as_na(s: &str) -> String {
