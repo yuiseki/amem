@@ -204,6 +204,8 @@ struct SearchHit {
 #[derive(Debug, Serialize)]
 struct TodayJson {
     date: String,
+    agent_identity: String,
+    agent_soul: String,
     owner_profile: String,
     owner_preferences: String,
     owner_diary: String,
@@ -371,6 +373,14 @@ fn init_memory_scaffold(memory_dir: &Path) -> Result<Vec<String>> {
     }
 
     let files = [
+        (
+            memory_dir.join("agent").join("IDENTITY.md"),
+            "# Agent Identity\n\n- \n",
+        ),
+        (
+            memory_dir.join("agent").join("SOUL.md"),
+            "# Agent Soul\n\n- \n",
+        ),
         (
             memory_dir.join("owner").join("profile.md"),
             "# Owner Profile\n\nname: \ngithub_username: \nlocation: \noccupation: \nnative_language: \n",
@@ -2604,6 +2614,8 @@ fn find_asdf_claude_bin() -> Option<String> {
 fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
     TodayJson {
         date: date.to_string(),
+        agent_identity: read_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
+        agent_soul: read_or_empty(memory_dir.join("agent").join("SOUL.md")),
         owner_profile: read_or_empty(memory_dir.join("owner").join("profile.md")),
         owner_preferences: read_or_empty(memory_dir.join("owner").join("preferences.md")),
         owner_diary: read_daily_owner_diary(memory_dir, date),
@@ -2613,11 +2625,22 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
 }
 
 fn render_today_snapshot(today: &TodayJson) -> String {
-    let mut out = format!(
-        "Today Snapshot ({})\n\n== Owner Profile ==\n{}",
-        today.date,
+    let mut out = format!("Today Snapshot ({})\n", today.date);
+
+    if !today.agent_identity.is_empty() {
+        out.push_str(&format!(
+            "\n== Agent Identity ==\n{}\n",
+            today.agent_identity
+        ));
+    }
+    if !today.agent_soul.is_empty() {
+        out.push_str(&format!("\n== Agent Soul ==\n{}\n", today.agent_soul));
+    }
+
+    out.push_str(&format!(
+        "\n== Owner Profile ==\n{}",
         empty_as_na(&today.owner_profile)
-    );
+    ));
     if has_meaningful_owner_preferences(&today.owner_preferences) {
         out.push_str(&format!(
             "\n\n== Owner Preferences ==\n{}",

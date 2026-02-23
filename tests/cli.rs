@@ -38,6 +38,10 @@ fn init_creates_memory_scaffold() {
         .assert(predicate::path::exists());
     tmp.child(".amem/owner/interests.md")
         .assert(predicate::path::exists());
+    tmp.child(".amem/agent/IDENTITY.md")
+        .assert(predicate::path::exists());
+    tmp.child(".amem/agent/SOUL.md")
+        .assert(predicate::path::exists());
     tmp.child(".amem/agent/tasks/open.md")
         .assert(predicate::path::exists());
     tmp.child(".amem/agent/tasks/done.md")
@@ -295,6 +299,28 @@ fn default_command_shows_owner_preferences_when_non_empty() {
         .success()
         .stdout(predicate::str::contains("== Owner Preferences =="))
         .stdout(predicate::str::contains("好きな言語: Rust"));
+}
+
+#[test]
+fn default_command_shows_agent_identity_and_soul() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+
+    tmp.child(".amem/agent/IDENTITY.md")
+        .write_str("# Identity\n- Name: TestAgent\n")
+        .unwrap();
+    tmp.child(".amem/agent/SOUL.md")
+        .write_str("# Soul\n- Core: Helpful\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path());
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("== Agent Identity =="))
+        .stdout(predicate::str::contains("TestAgent"))
+        .stdout(predicate::str::contains("== Agent Soul =="))
+        .stdout(predicate::str::contains("Helpful"));
 }
 
 #[test]
