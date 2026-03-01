@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
@@ -525,7 +525,38 @@ fn cmd_keep(
     } else {
         println!("{}", rel_or_abs(memory_dir, &target));
     }
+    notify_discord_via_acomm_for_keep(text);
     Ok(())
+}
+
+fn notify_discord_via_acomm_for_keep(text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+
+    // Only attempt Discord notify when the required acomm/Discord env is present.
+    let discord_enabled = matches!(
+        (
+            std::env::var("DISCORD_BOT_TOKEN"),
+            std::env::var("DISCORD_NOTIFY_CHANNEL_ID"),
+        ),
+        (Ok(token), Ok(channel_id))
+            if !token.trim().is_empty() && !channel_id.trim().is_empty()
+    );
+    if !discord_enabled {
+        return;
+    }
+
+    let mut cmd = ProcessCommand::new("acomm");
+    cmd.arg("--discord")
+        .arg("--agent")
+        .arg(text)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let _ = cmd.spawn();
 }
 
 fn cmd_list(

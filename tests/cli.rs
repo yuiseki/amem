@@ -31,7 +31,7 @@ fn init_creates_memory_scaffold() {
     tmp.child(".amem/owner/profile.md")
         .assert(predicate::str::contains("github_username: "));
     tmp.child(".amem/owner/profile.md")
-        .assert(predicate::str::contains("native_language: "));
+        .assert(predicate::str::contains("- **Language:** "));
     tmp.child(".amem/owner/personality.md")
         .assert(predicate::path::exists());
     tmp.child(".amem/owner/preferences.md")
@@ -123,6 +123,68 @@ fn keep_appends_to_activity_log() {
     activity.assert(predicate::str::contains("Went for a walk"));
 }
 
+#[cfg(unix)]
+#[test]
+fn keep_notifies_discord_via_acomm_when_discord_env_is_enabled() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let memory = tmp.path().join(".amem");
+    let bin_dir = tmp.child("bin");
+    bin_dir.create_dir_all().unwrap();
+    let log_path = tmp.child("acomm-args.log");
+    let fake_acomm = bin_dir.child("acomm");
+    fake_acomm
+        .write_str(
+            r#"#!/bin/sh
+printf '%s\n' "$@" > "$ACOMM_ARGS_LOG"
+printf 'acomm fake stdout\n'
+printf 'acomm fake stderr\n' >&2
+"#,
+        )
+        .unwrap();
+    let mut perms = fs::metadata(fake_acomm.path()).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(fake_acomm.path(), perms).unwrap();
+
+    let path_env = match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => format!("{}:{}", bin_dir.path().display(), existing),
+        _ => bin_dir.path().display().to_string(),
+    };
+
+    let mut cmd = bin();
+    cmd.current_dir(tmp.path())
+        .arg("--memory-dir")
+        .arg(&memory)
+        .arg("keep")
+        .arg("Went for a walk")
+        .arg("--date")
+        .arg("2026-02-21")
+        .env("PATH", path_env)
+        .env("DISCORD_BOT_TOKEN", "dummy-token")
+        .env("DISCORD_NOTIFY_CHANNEL_ID", "123456789")
+        .env("ACOMM_ARGS_LOG", log_path.path());
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("agent/activity/2026/02/2026-02-21.md"))
+        .stdout(predicate::str::contains("acomm fake stdout").not())
+        .stderr(predicate::str::contains("acomm fake stderr").not());
+
+    let mut ready = false;
+    for _ in 0..20 {
+        if log_path.path().exists() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(ready, "fake acomm log was not created in time");
+    let logged = fs::read_to_string(log_path.path()).unwrap();
+    assert!(
+        logged.contains("--discord\n--agent\nWent for a walk\n"),
+        "expected fake acomm to receive '--discord --agent <text>', got: {logged}"
+    );
+}
+
 #[test]
 fn list_and_ls_alias_work() {
     let tmp = assert_fs::TempDir::new().unwrap();
@@ -151,13 +213,16 @@ fn list_and_ls_alias_work() {
 }
 
 #[test]
-fn search_and_remember_alias_work() {
+fn search_and_remember_work() {
     let tmp = assert_fs::TempDir::new().unwrap();
     tmp.child(".amem/agent/activity/2026/02/2026-02-21.md")
         .write_str("東京で散歩した\n")
         .unwrap();
     tmp.child(".amem/agent/activity/2026/02/2026-02-20.md")
         .write_str("大阪で会議した\n")
+        .unwrap();
+    tmp.child(".amem/agent/memory/P1/tokyo.md")
+        .write_str("東京のメモ\n")
         .unwrap();
 
     let mut search = bin();
@@ -178,13 +243,13 @@ fn search_and_remember_alias_work() {
     remember
         .current_dir(tmp.path())
         .arg("remember")
-        .arg("東京")
-        .arg("--top-k")
-        .arg("1");
+        .arg("--query")
+        .arg("東京");
     remember
         .assert()
         .success()
-        .stdout(predicate::str::contains("2026-02-21.md"));
+        .stdout(predicate::str::contains("== P1 (tokyo.md) =="))
+        .stdout(predicate::str::contains("東京のメモ"));
 }
 
 #[test]
