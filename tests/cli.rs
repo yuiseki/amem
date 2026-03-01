@@ -189,6 +189,80 @@ printf 'acomm fake stderr\n' >&2
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn keep_notifies_discord_via_acomm_when_discord_env_exists_in_yuiclaw_env_file() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let memory = tmp.path().join(".amem");
+    let bin_dir = tmp.child("bin");
+    bin_dir.create_dir_all().unwrap();
+    let config_dir = tmp.child(".config/yuiclaw");
+    config_dir.create_dir_all().unwrap();
+    tmp.child(".config/yuiclaw/.env")
+        .write_str("DISCORD_BOT_TOKEN=file-token\nDISCORD_NOTIFY_CHANNEL_ID=file-channel\n")
+        .unwrap();
+    let args_log_path = tmp.child("acomm-args.log");
+    let env_log_path = tmp.child("acomm-env.log");
+    let fake_acomm = bin_dir.child("acomm");
+    fake_acomm
+        .write_str(
+            r#"#!/bin/sh
+printf '%s\n' "$@" > "$ACOMM_ARGS_LOG"
+printf 'token=%s\nchannel=%s\n' "$DISCORD_BOT_TOKEN" "$DISCORD_NOTIFY_CHANNEL_ID" > "$ACOMM_ENV_LOG"
+"#,
+        )
+        .unwrap();
+    let mut perms = fs::metadata(fake_acomm.path()).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(fake_acomm.path(), perms).unwrap();
+
+    let path_env = match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => {
+            format!("{}:{}", bin_dir.path().display(), existing)
+        }
+        _ => bin_dir.path().display().to_string(),
+    };
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path())
+        .arg("--memory-dir")
+        .arg(&memory)
+        .arg("keep")
+        .arg("Went for a walk from env file")
+        .arg("--date")
+        .arg("2026-02-21")
+        .env("PATH", path_env)
+        .env_remove("DISCORD_BOT_TOKEN")
+        .env_remove("DISCORD_NOTIFY_CHANNEL_ID")
+        .env("ACOMM_ARGS_LOG", args_log_path.path())
+        .env("ACOMM_ENV_LOG", env_log_path.path());
+
+    cmd.assert().success();
+
+    let mut ready = false;
+    for _ in 0..20 {
+        if args_log_path.path().exists() && env_log_path.path().exists() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(ready, "fake acomm logs were not created in time");
+
+    let logged_args = fs::read_to_string(args_log_path.path()).unwrap();
+    assert!(
+        logged_args.contains("--discord\n--agent\nWent for a walk from env file\n"),
+        "expected fake acomm to receive '--discord --agent <text>', got: {logged_args}"
+    );
+
+    let logged_env = fs::read_to_string(env_log_path.path()).unwrap();
+    assert!(
+        logged_env.contains("token=file-token\nchannel=file-channel\n"),
+        "expected fake acomm to inherit env from ~/.config/yuiclaw/.env, got: {logged_env}"
+    );
+}
+
 #[test]
 fn list_and_ls_alias_work() {
     let tmp = assert_fs::TempDir::new().unwrap();

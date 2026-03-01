@@ -112,7 +112,7 @@ Append an entry.
 - `--kind <activity|inbox|task-note>` (default: `activity`)
 - `--date <yyyy-mm-dd>` (default: today)
 - `--source <name>` (default: `manual`)
-- Best-effort Discord mirror: if `DISCORD_BOT_TOKEN` and `DISCORD_NOTIFY_CHANNEL_ID` are set and `acomm` is on `PATH`, `amem keep` also spawns `acomm --discord --agent <text>` (stdout/stderr suppressed)
+- Best-effort Discord mirror: if `DISCORD_BOT_TOKEN` and `DISCORD_NOTIFY_CHANNEL_ID` are exported, or present in `~/.config/yuiclaw/.env`, and `acomm` is on `PATH`, `amem keep` also spawns `acomm --discord --agent <text>` (stdout/stderr suppressed)
 
 Examples:
 

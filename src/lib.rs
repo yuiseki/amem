@@ -549,28 +549,70 @@ fn notify_discord_via_acomm_for_keep(text: &str) {
         return;
     }
 
-    // Only attempt Discord notify when the required acomm/Discord env is present.
-    let discord_enabled = matches!(
-        (
-            std::env::var("DISCORD_BOT_TOKEN"),
-            std::env::var("DISCORD_NOTIFY_CHANNEL_ID"),
-        ),
-        (Ok(token), Ok(channel_id))
-            if !token.trim().is_empty() && !channel_id.trim().is_empty()
-    );
-    if !discord_enabled {
+    let Some(discord_bot_token) = resolve_discord_env_value_for_keep("DISCORD_BOT_TOKEN") else {
         return;
-    }
+    };
+    let Some(discord_notify_channel_id) =
+        resolve_discord_env_value_for_keep("DISCORD_NOTIFY_CHANNEL_ID")
+    else {
+        return;
+    };
 
     let mut cmd = ProcessCommand::new("acomm");
     cmd.arg("--discord")
         .arg("--agent")
         .arg(text)
+        .env("DISCORD_BOT_TOKEN", discord_bot_token)
+        .env("DISCORD_NOTIFY_CHANNEL_ID", discord_notify_channel_id)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
     let _ = cmd.spawn();
+}
+
+fn resolve_discord_env_value_for_keep(key: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(key) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let env_path = std::env::var_os("HOME")
+        .map(PathBuf::from)?
+        .join(".config")
+        .join("yuiclaw")
+        .join(".env");
+    read_simple_env_file_value(&env_path, key)
+}
+
+fn read_simple_env_file_value(path: &Path, key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+        let (raw_key, raw_value) = trimmed.split_once('=')?;
+        if raw_key.trim() != key {
+            continue;
+        }
+        let value = raw_value.trim();
+        let value = if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            &value[1..value.len() - 1]
+        } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        let value = value.trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn cmd_list(
