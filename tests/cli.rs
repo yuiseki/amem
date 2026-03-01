@@ -263,6 +263,52 @@ printf 'token=%s\nchannel=%s\n' "$DISCORD_BOT_TOKEN" "$DISCORD_NOTIFY_CHANNEL_ID
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn keep_waits_for_discord_notification_process_to_finish() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let memory = tmp.path().join(".amem");
+    let bin_dir = tmp.child("bin");
+    bin_dir.create_dir_all().unwrap();
+    let done_path = tmp.child("acomm-done.log");
+    let fake_acomm = bin_dir.child("acomm");
+    fake_acomm
+        .write_str(
+            r#"#!/bin/sh
+sleep 0.2
+printf 'done\n' > "$ACOMM_DONE_LOG"
+"#,
+        )
+        .unwrap();
+    let mut perms = fs::metadata(fake_acomm.path()).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(fake_acomm.path(), perms).unwrap();
+
+    let path_env = match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => {
+            format!("{}:{}", bin_dir.path().display(), existing)
+        }
+        _ => bin_dir.path().display().to_string(),
+    };
+
+    let mut cmd = bin();
+    cmd.current_dir(tmp.path())
+        .arg("--memory-dir")
+        .arg(&memory)
+        .arg("keep")
+        .arg("Wait for fake acomm to finish")
+        .arg("--date")
+        .arg("2026-02-21")
+        .env("PATH", path_env)
+        .env("DISCORD_BOT_TOKEN", "dummy-token")
+        .env("DISCORD_NOTIFY_CHANNEL_ID", "123456789")
+        .env("ACOMM_DONE_LOG", done_path.path());
+
+    cmd.assert().success();
+
+    done_path.assert(predicate::path::exists());
+}
+
 #[test]
 fn list_and_ls_alias_work() {
     let tmp = assert_fs::TempDir::new().unwrap();

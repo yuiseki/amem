@@ -568,7 +568,7 @@ fn notify_discord_via_acomm_for_keep(text: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let _ = cmd.spawn();
+    let _ = cmd.status();
 }
 
 fn resolve_discord_env_value_for_keep(key: &str) -> Option<String> {
