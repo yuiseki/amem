@@ -74,6 +74,7 @@ Top-level commands:
 - `get`
 - `set`
 - `owner` (alias for `get owner`)
+- `agent` (alias for `get agent`)
 - `codex`
 - `gemini`
 - `claude`
@@ -160,9 +161,15 @@ Domain-oriented read commands:
 - `amem get owner`
 - `amem get owner <name|github|github_username|email|location|job|occupation|lang|native_language|birthday>`
 - `amem get owner preference`
+- `amem get agent [identity|soul|memory|memories]`
 - `amem get diary [today|yesterday|week|month|yyyy-mm-dd]`
 - `amem get acts [today|yesterday|week|month|yyyy-mm-dd]`
 - `amem get tasks [today|yesterday|week|month|yyyy-mm-dd]`
+
+Top-level aliases:
+
+- `amem owner [<key>|preference]`
+- `amem agent [identity|soul|memory|memories]`
 
 `get diary/acts/tasks` options:
 

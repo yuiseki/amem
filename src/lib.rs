@@ -113,6 +113,9 @@ pub enum Commands {
     Owner {
         target: Option<String>,
     },
+    Agent {
+        target: Option<String>,
+    },
     Codex {
         #[arg(long, default_value_t = false)]
         resume_only: bool,
@@ -148,6 +151,9 @@ pub enum Commands {
 #[derive(Debug, Subcommand)]
 pub enum GetTarget {
     Owner {
+        target: Option<String>,
+    },
+    Agent {
         target: Option<String>,
     },
     #[command(visible_alias = "diaries")]
@@ -324,6 +330,7 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
         Some(Commands::Set { target }) => cmd_set(&memory_dir, target, cli.json),
         Some(Commands::Triage { target }) => cmd_triage(&memory_dir, target, cli.json),
         Some(Commands::Owner { target }) => cmd_get_owner(&memory_dir, target, cli.json),
+        Some(Commands::Agent { target }) => cmd_get_agent(&memory_dir, target, cli.json),
         Some(Commands::Codex {
             resume_only,
             prompt,
@@ -873,6 +880,7 @@ fn cmd_get(memory_dir: &Path, target: GetTarget, json: bool) -> Result<()> {
     init_memory_scaffold(memory_dir)?;
     match target {
         GetTarget::Owner { target } => cmd_get_owner(memory_dir, target, json),
+        GetTarget::Agent { target } => cmd_get_agent(memory_dir, target, json),
         GetTarget::Diary {
             period,
             limit,
@@ -1010,6 +1018,157 @@ fn cmd_get_owner(memory_dir: &Path, target: Option<String>, json: bool) -> Resul
             Ok(())
         }
     }
+}
+
+fn cmd_get_agent(memory_dir: &Path, target: Option<String>, json: bool) -> Result<()> {
+    init_memory_scaffold(memory_dir)?;
+    let identity_path = memory_dir.join("agent").join("IDENTITY.md");
+    let soul_path = memory_dir.join("agent").join("SOUL.md");
+    let identity_content = read_body_or_empty(identity_path.clone());
+    let soul_content = read_body_or_empty(soul_path.clone());
+    let (memories_content, memories_paths) = read_agent_memories(memory_dir);
+
+    match target.as_deref().map(|s| s.trim().to_lowercase()) {
+        None => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "identity": {
+                            "path": rel_or_abs(memory_dir, &identity_path),
+                            "content": identity_content,
+                        },
+                        "soul": {
+                            "path": rel_or_abs(memory_dir, &soul_path),
+                            "content": soul_content,
+                        },
+                        "memories": {
+                            "paths": memories_paths
+                                .iter()
+                                .map(|p| rel_or_abs(memory_dir, Path::new(p)))
+                                .collect::<Vec<_>>(),
+                            "content": memories_content,
+                        },
+                    }))?
+                );
+            } else {
+                println!(
+                    "{}",
+                    render_agent_sections(
+                        memory_dir,
+                        &identity_path,
+                        &identity_content,
+                        &soul_path,
+                        &soul_content,
+                        &memories_paths,
+                        &memories_content,
+                    )
+                );
+            }
+            Ok(())
+        }
+        Some(t) if t == "identity" => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": rel_or_abs(memory_dir, &identity_path),
+                        "content": identity_content,
+                    }))?
+                );
+            } else {
+                println!("{identity_content}");
+            }
+            Ok(())
+        }
+        Some(t) if t == "soul" => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": rel_or_abs(memory_dir, &soul_path),
+                        "content": soul_content,
+                    }))?
+                );
+            } else {
+                println!("{soul_content}");
+            }
+            Ok(())
+        }
+        Some(t) if t == "memory" || t == "memories" => {
+            let rel_paths = memories_paths
+                .iter()
+                .map(|p| rel_or_abs(memory_dir, Path::new(p)))
+                .collect::<Vec<_>>();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "paths": rel_paths,
+                        "content": memories_content,
+                    }))?
+                );
+            } else {
+                let paths = rel_paths
+                    .into_iter()
+                    .map(|p| format!("[{p}]"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if paths.is_empty() {
+                    println!("{}", empty_as_na(&memories_content));
+                } else {
+                    println!("{}\n{}", paths, empty_as_na(&memories_content));
+                }
+            }
+            Ok(())
+        }
+        Some(t) => {
+            bail!("unsupported agent key: {t}. supported: identity, soul, memory(memories)")
+        }
+    }
+}
+
+fn render_agent_sections(
+    memory_dir: &Path,
+    identity_path: &Path,
+    identity_content: &str,
+    soul_path: &Path,
+    soul_content: &str,
+    memories_paths: &[String],
+    memories_content: &str,
+) -> String {
+    let mut sections = Vec::new();
+    sections.push(format!(
+        "== Agent Identity ==\n[{}]\n{}",
+        rel_or_abs(memory_dir, identity_path),
+        empty_as_na(identity_content)
+    ));
+    sections.push(format!(
+        "== Agent Soul ==\n[{}]\n{}",
+        rel_or_abs(memory_dir, soul_path),
+        empty_as_na(soul_content)
+    ));
+
+    let rel_paths = memories_paths
+        .iter()
+        .map(|p| rel_or_abs(memory_dir, Path::new(p)))
+        .collect::<Vec<_>>();
+    let paths = rel_paths
+        .iter()
+        .map(|p| format!("[{p}]"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sections.push(format!(
+        "== Agent Memories ==\n{}\n{}",
+        if paths.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", paths)
+        },
+        empty_as_na(memories_content)
+    ));
+
+    sections.join("\n\n")
 }
 
 fn cmd_set_owner(

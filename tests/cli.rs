@@ -547,6 +547,41 @@ fn get_owner_supports_alias_key_and_owner_alias_command() {
 }
 
 #[test]
+fn get_agent_supports_target_and_agent_alias_command() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    tmp.child(".amem/agent/IDENTITY.md")
+        .write_str("# Identity\n- Name: TestAgent\n")
+        .unwrap();
+    tmp.child(".amem/agent/SOUL.md")
+        .write_str("# Soul\n- Core: Helpful\n")
+        .unwrap();
+
+    let mut get_identity = bin();
+    set_test_home(&mut get_identity, tmp.path());
+    get_identity
+        .current_dir(tmp.path())
+        .arg("get")
+        .arg("agent")
+        .arg("identity");
+    get_identity
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("TestAgent"))
+        .stdout(predicate::str::contains("Helpful").not());
+
+    let mut agent_alias = bin();
+    set_test_home(&mut agent_alias, tmp.path());
+    agent_alias.current_dir(tmp.path()).arg("agent");
+    agent_alias
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("== Agent Identity =="))
+        .stdout(predicate::str::contains("TestAgent"))
+        .stdout(predicate::str::contains("== Agent Soul =="))
+        .stdout(predicate::str::contains("Helpful"));
+}
+
+#[test]
 fn set_owner_updates_profile_and_preferences() {
     let tmp = assert_fs::TempDir::new().unwrap();
 
