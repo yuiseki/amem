@@ -112,6 +112,7 @@ Append an entry.
 - `--kind <activity|inbox|task-note>` (default: `activity`)
 - `--date <yyyy-mm-dd>` (default: today)
 - `--source <name>` (default: `manual`)
+- Write entries in the owner's language by default (`owner/profile.md` -> `Language`)
 - Best-effort Discord mirror: if `DISCORD_BOT_TOKEN` and `DISCORD_NOTIFY_CHANNEL_ID` are exported, or present in `~/.config/yuiclaw/.env`, and `acomm` is on `PATH`, `amem keep` also spawns `acomm --discord --agent <text>` (stdout/stderr suppressed)
 
 Examples:
@@ -293,6 +294,8 @@ Compatibility:
 - Legacy paths (`tasks/*`, `inbox/*`, `activity/*`) are still read for backward compatibility.
 
 Default `owner/profile.md` template fields:
+
+The generated scaffold documents that `amem` entries should be recorded in the owner's language by default, using `owner/profile.md` -> `Language` as the source of truth.
 
 - `name`
 - `github_username`

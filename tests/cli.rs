@@ -42,6 +42,10 @@ fn init_creates_memory_scaffold() {
         .assert(predicate::path::exists());
     tmp.child(".amem/agent/SOUL.md")
         .assert(predicate::path::exists());
+    tmp.child(".amem/agent/SOUL.md")
+        .assert(predicate::str::contains(
+            "Write memory in the owner's language.",
+        ));
     tmp.child(".amem/agent/tasks/open.md")
         .assert(predicate::path::exists());
     tmp.child(".amem/agent/tasks/done.md")

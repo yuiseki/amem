@@ -6,6 +6,8 @@
 - **Timezone:** 
 - **Language:** 
 
+_`amem` entries should be written in this language by default._
+
 ## Notes
 
 - github_username: 
