@@ -36,7 +36,7 @@ flowchart LR
     index -->|"amem search"| cli
 ```
 
-`amem today --json` is the primary interface used by `acore` during agent session initialization. It returns a JSON snapshot containing owner profile, agent soul, recent activities, and P0 memories, which are injected into the seed prompt for every AI session.
+`amem today --json` is the primary interface used by `acore` during agent session initialization. It returns a JSON snapshot containing owner profile, agent soul, recent activities, and P0 memories. For daily sections, the snapshot includes a 2-day window (`today` + `yesterday`, newest first), and that same window is injected into the seed prompt for every AI session.
 
 ## Install
 
@@ -139,6 +139,7 @@ List memory files.
 Render Today Snapshot (Markdown by default, JSON with `--json`).
 
 - `--date <yyyy-mm-dd>`
+- Daily sections use a 2-day window: `today` + `yesterday` in descending order
 - Markdown snapshot labels use explicit namespaces:
   - `Owner Profile`
   - `Owner Preferences` (hidden when empty)
@@ -214,7 +215,7 @@ Reserved command. Current output:
 
 ## Coding Agent Bridge Commands
 
-These commands bootstrap memory context into each agent, then resume an interactive session.
+These commands bootstrap memory context into each agent, then resume an interactive session. The injected snapshot uses the same 2-day daily window as `amem today`.
 
 Common options:
 

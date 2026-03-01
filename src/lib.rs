@@ -217,10 +217,7 @@ pub enum SetTarget {
 
 #[derive(Debug, Subcommand)]
 pub enum TriageTarget {
-    Memory {
-        filename: String,
-        priority: String,
-    },
+    Memory { filename: String, priority: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -243,12 +240,22 @@ struct TodayJson {
     owner_preferences_path: String,
     owner_diary: String,
     owner_diary_path: String,
+    owner_diary_paths: Vec<String>,
+    owner_diary_recent: Vec<RecentDailySection>,
     open_tasks: String,
     open_tasks_paths: Vec<String>,
     activity: String,
     activity_paths: Vec<String>,
+    activity_recent: Vec<RecentDailySection>,
     agent_memories: String,
     agent_memories_paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RecentDailySection {
+    date: String,
+    paths: Vec<String>,
+    content: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -790,7 +797,11 @@ fn cmd_triage_memory(
 
 fn find_memory_file(memory_dir: &Path, filename: &str) -> Option<PathBuf> {
     for p in ["P0", "P1", "P2", "P3"] {
-        let path = memory_dir.join("agent").join("memory").join(p).join(filename);
+        let path = memory_dir
+            .join("agent")
+            .join("memory")
+            .join(p)
+            .join(filename);
         if path.exists() {
             return Some(path);
         }
@@ -843,7 +854,10 @@ fn cmd_context(memory_dir: &Path, task: &str, date: Option<String>, json: bool) 
         "\n== Today Snapshot ==\nAgent Tasks:\n{}",
         empty_as_na(&today.open_tasks)
     );
-    println!("\nAgent Activities:\n{}", empty_as_na(&today.activity));
+    println!(
+        "\nAgent Activities:\n{}",
+        render_recent_daily_sections(&today.activity_recent)
+    );
     println!("\n== Related Memory ==");
     if hits.is_empty() {
         println!("(none)");
@@ -2909,6 +2923,8 @@ fn find_asdf_claude_bin() -> Option<String> {
 
 fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
     let (memories_content, memories_paths) = read_agent_memories(memory_dir);
+    let owner_diary_recent = load_recent_owner_diary_sections(memory_dir, date);
+    let activity_recent = load_recent_activity_sections(memory_dir, date);
     TodayJson {
         date: date.to_string(),
         agent_identity: read_body_or_empty(memory_dir.join("agent").join("IDENTITY.md")),
@@ -2936,20 +2952,19 @@ fn load_today(memory_dir: &Path, date: NaiveDate) -> TodayJson {
             .to_string_lossy()
             .to_string(),
         owner_diary: read_daily_owner_diary(memory_dir, date),
-        owner_diary_path: owner_diary_path(memory_dir, date).to_string_lossy().to_string(),
+        owner_diary_path: owner_diary_path(memory_dir, date)
+            .to_string_lossy()
+            .to_string(),
+        owner_diary_paths: flatten_recent_section_paths(&owner_diary_recent),
+        owner_diary_recent,
         open_tasks: read_open_tasks_summary(memory_dir),
         open_tasks_paths: open_task_paths(memory_dir)
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect(),
         activity: read_daily_activity_summary(memory_dir, date),
-        activity_paths: vec![
-            agent_activity_path(memory_dir, date),
-            legacy_activity_path(memory_dir, date),
-        ]
-        .into_iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect(),
+        activity_paths: flatten_recent_section_paths(&activity_recent),
+        activity_recent,
         agent_memories: memories_content,
         agent_memories_paths: memories_paths,
     }
@@ -3012,9 +3027,8 @@ fn render_today_snapshot(today: &TodayJson) -> String {
     }
 
     sections.push(format!(
-        "== Owner Diary ==\n[{}]\n{}",
-        today.owner_diary_path,
-        empty_as_na(&today.owner_diary)
+        "== Owner Diary ==\n{}",
+        render_recent_daily_sections(&today.owner_diary_recent)
     ));
 
     let tasks_paths = today
@@ -3034,24 +3048,44 @@ fn render_today_snapshot(today: &TodayJson) -> String {
         empty_as_na(&today.open_tasks)
     ));
 
-    let acts_paths = today
-        .activity_paths
-        .iter()
-        .filter(|p| Path::new(p).exists())
-        .map(|p| format!("[{p}]"))
-        .collect::<Vec<_>>()
-        .join("\n");
     sections.push(format!(
-        "== Agent Activities ==\n{}\n{}",
-        if acts_paths.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", acts_paths)
-        },
-        empty_as_na(&today.activity)
+        "== Agent Activities ==\n{}",
+        render_recent_daily_sections(&today.activity_recent)
     ));
 
     sections.join("\n\n")
+}
+
+fn flatten_recent_section_paths(entries: &[RecentDailySection]) -> Vec<String> {
+    entries
+        .iter()
+        .flat_map(|entry| entry.paths.iter().cloned())
+        .collect()
+}
+
+fn render_recent_daily_sections(entries: &[RecentDailySection]) -> String {
+    if entries.is_empty() {
+        return "(none)".to_string();
+    }
+
+    entries
+        .iter()
+        .map(|entry| {
+            let paths = entry
+                .paths
+                .iter()
+                .filter(|p| Path::new(p).exists())
+                .map(|p| format!("[{p}]"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if paths.is_empty() {
+                format!("### {}\n{}", entry.date, entry.content)
+            } else {
+                format!("### {}\n{}\n{}", entry.date, paths, entry.content)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn has_meaningful_owner_preferences(content: &str) -> bool {
@@ -3199,6 +3233,57 @@ fn read_daily_activity_summary(memory_dir: &Path, date: NaiveDate) -> String {
     dedup_keep_order(lines).join("\n")
 }
 
+fn recent_snapshot_dates(date: NaiveDate) -> [NaiveDate; 2] {
+    [date, date - Duration::days(1)]
+}
+
+fn load_recent_owner_diary_sections(memory_dir: &Path, date: NaiveDate) -> Vec<RecentDailySection> {
+    recent_snapshot_dates(date)
+        .into_iter()
+        .filter_map(|entry_date| {
+            let path = owner_diary_path(memory_dir, entry_date);
+            let content = read_daily_owner_diary(memory_dir, entry_date);
+            if content.is_empty() {
+                return None;
+            }
+            let mut paths = Vec::new();
+            if path.exists() {
+                paths.push(path.to_string_lossy().to_string());
+            }
+            Some(RecentDailySection {
+                date: entry_date.to_string(),
+                paths,
+                content,
+            })
+        })
+        .collect()
+}
+
+fn load_recent_activity_sections(memory_dir: &Path, date: NaiveDate) -> Vec<RecentDailySection> {
+    recent_snapshot_dates(date)
+        .into_iter()
+        .filter_map(|entry_date| {
+            let content = read_daily_activity_summary(memory_dir, entry_date);
+            if content.is_empty() {
+                return None;
+            }
+            let paths = [
+                agent_activity_path(memory_dir, entry_date),
+                legacy_activity_path(memory_dir, entry_date),
+            ]
+            .into_iter()
+            .filter(|path| path.exists())
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+            Some(RecentDailySection {
+                date: entry_date.to_string(),
+                paths,
+                content,
+            })
+        })
+        .collect()
+}
+
 fn read_daily_owner_diary(memory_dir: &Path, date: NaiveDate) -> String {
     let path = owner_diary_path(memory_dir, date);
     let content = fs::read_to_string(path).unwrap_or_default();
@@ -3221,7 +3306,11 @@ fn read_agent_memories(memory_dir: &Path) -> (String, Vec<String>) {
                 let (_, body) = parse_daily_frontmatter_and_body(&content);
                 let trimmed = body.trim();
                 if !trimmed.is_empty() {
-                    all_content.push(format!("### {}\n{}", path.file_name().unwrap().to_string_lossy(), trimmed));
+                    all_content.push(format!(
+                        "### {}\n{}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        trimmed
+                    ));
                     all_paths.push(path.to_string_lossy().to_string());
                 }
             }

@@ -146,7 +146,9 @@ printf 'acomm fake stderr\n' >&2
     fs::set_permissions(fake_acomm.path(), perms).unwrap();
 
     let path_env = match std::env::var("PATH") {
-        Ok(existing) if !existing.is_empty() => format!("{}:{}", bin_dir.path().display(), existing),
+        Ok(existing) if !existing.is_empty() => {
+            format!("{}:{}", bin_dir.path().display(), existing)
+        }
         _ => bin_dir.path().display().to_string(),
     };
 
@@ -165,7 +167,9 @@ printf 'acomm fake stderr\n' >&2
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("agent/activity/2026/02/2026-02-21.md"))
+        .stdout(predicate::str::contains(
+            "agent/activity/2026/02/2026-02-21.md",
+        ))
         .stdout(predicate::str::contains("acomm fake stdout").not())
         .stderr(predicate::str::contains("acomm fake stderr").not());
 
@@ -253,37 +257,116 @@ fn search_and_remember_work() {
 }
 
 #[test]
-fn default_command_runs_today() {
+fn default_command_runs_today_and_includes_yesterday_daily_sections() {
     let tmp = assert_fs::TempDir::new().unwrap();
     let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
     let yyyy = today.format("%Y").to_string();
     let mm = today.format("%m").to_string();
     let ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
 
     tmp.child(".amem/owner/profile.md")
         .write_str("name: yuiseki\n")
         .unwrap();
     tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"))
-        .write_str("- 09:50 diary entry\n")
+        .write_str("- 09:50 today diary entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:40 yesterday diary entry\n")
         .unwrap();
     tmp.child(".amem/agent/tasks/open.md")
         .write_str("- finish amem\n")
         .unwrap();
     tmp.child(format!(".amem/agent/activity/{yyyy}/{mm}/{ymd}.md"))
-        .write_str("- started coding\n")
+        .write_str("- 10:00 [codex] today activity entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:30 [codex] yesterday activity entry\n")
         .unwrap();
 
     let mut cmd = bin();
     set_test_home(&mut cmd, tmp.path());
     cmd.current_dir(tmp.path());
-    cmd.assert()
+    let assert = cmd
+        .assert()
         .success()
         .stdout(predicate::str::contains("== Owner Diary =="))
-        .stdout(predicate::str::contains("diary entry"))
+        .stdout(predicate::str::contains("today diary entry"))
+        .stdout(predicate::str::contains("yesterday diary entry"))
         .stdout(predicate::str::contains("== Agent Tasks =="))
         .stdout(predicate::str::contains("== Agent Activities =="))
         .stdout(predicate::str::contains("== Owner Preferences ==").not())
         .stdout(predicate::str::contains("finish amem"));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.find("today diary entry").unwrap() < stdout.find("yesterday diary entry").unwrap()
+    );
+    assert!(
+        stdout.find("today activity entry").unwrap()
+            < stdout.find("yesterday activity entry").unwrap()
+    );
+}
+
+#[test]
+fn today_json_includes_yesterday_daily_sections() {
+    let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let yyyy = today.format("%Y").to_string();
+    let mm = today.format("%m").to_string();
+    let ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
+
+    tmp.child(".amem/owner/profile.md")
+        .write_str("name: yuiseki\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("- 09:50 today diary entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:40 yesterday diary entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{yyyy}/{mm}/{ymd}.md"))
+        .write_str("- 10:00 [codex] today activity entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:30 [codex] yesterday activity entry\n")
+        .unwrap();
+
+    let mut cmd = bin();
+    set_test_home(&mut cmd, tmp.path());
+    cmd.current_dir(tmp.path()).arg("today").arg("--json");
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(json["owner_diary_recent"].as_array().unwrap().len(), 2);
+    assert_eq!(json["owner_diary_recent"][0]["date"].as_str().unwrap(), ymd);
+    assert_eq!(
+        json["owner_diary_recent"][1]["date"].as_str().unwrap(),
+        y_ymd
+    );
+    assert!(
+        json["owner_diary_recent"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("yesterday diary entry")
+    );
+
+    assert_eq!(json["activity_recent"].as_array().unwrap().len(), 2);
+    assert_eq!(json["activity_recent"][0]["date"].as_str().unwrap(), ymd);
+    assert_eq!(json["activity_recent"][1]["date"].as_str().unwrap(), y_ymd);
+    assert!(
+        json["activity_recent"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("yesterday activity entry")
+    );
 }
 
 #[test]
@@ -946,8 +1029,28 @@ fn get_acts_month_detail_shows_full_entries() {
 #[test]
 fn codex_subcommand_seeds_then_resumes_last() {
     let tmp = assert_fs::TempDir::new().unwrap();
+    let today = Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap();
+    let t_yyyy = today.format("%Y").to_string();
+    let t_mm = today.format("%m").to_string();
+    let t_ymd = today.format("%Y-%m-%d").to_string();
+    let y_yyyy = yesterday.format("%Y").to_string();
+    let y_mm = yesterday.format("%m").to_string();
+    let y_ymd = yesterday.format("%Y-%m-%d").to_string();
     tmp.child(".amem/owner/profile.md")
         .write_str("name: tester\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("- 09:10 today diary entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/owner/diary/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:10 yesterday diary entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{t_yyyy}/{t_mm}/{t_ymd}.md"))
+        .write_str("- 09:20 [codex] today activity entry\n")
+        .unwrap();
+    tmp.child(format!(".amem/agent/activity/{y_yyyy}/{y_mm}/{y_ymd}.md"))
+        .write_str("- 08:20 [codex] yesterday activity entry\n")
         .unwrap();
 
     let mock = tmp.child("mock-codex.sh");
@@ -957,10 +1060,18 @@ set -eu
 case "${1:-}" in
   exec)
     if [[ "$*" == *"== Owner Profile =="* ]]; then
-      if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
-        echo "exec markdown yolo" >> "$AMEM_MOCK_CODEX_LOG"
+      if [[ "$*" == *"today diary entry"* && "$*" == *"yesterday diary entry"* && "$*" == *"today activity entry"* && "$*" == *"yesterday activity entry"* ]]; then
+        if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
+          echo "exec markdown window yolo" >> "$AMEM_MOCK_CODEX_LOG"
+        else
+          echo "exec markdown window no-yolo" >> "$AMEM_MOCK_CODEX_LOG"
+        fi
       else
-        echo "exec markdown no-yolo" >> "$AMEM_MOCK_CODEX_LOG"
+        if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
+          echo "exec markdown no-window yolo" >> "$AMEM_MOCK_CODEX_LOG"
+        else
+          echo "exec markdown no-window no-yolo" >> "$AMEM_MOCK_CODEX_LOG"
+        fi
       fi
     else
       if [[ "$*" == *"--dangerously-bypass-approvals-and-sandbox"* ]]; then
@@ -1008,7 +1119,7 @@ esac
         .map(|s| s.to_string())
         .collect();
     assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "exec markdown yolo");
+    assert_eq!(lines[0], "exec markdown window yolo");
     assert!(lines[1].starts_with("resume "));
     assert!(lines[1].contains("--dangerously-bypass-approvals-and-sandbox"));
     assert!(lines[1].contains("019c7f9d-2298-70f1-a19d-c164f18d7f45"));
