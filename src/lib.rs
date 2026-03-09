@@ -2434,18 +2434,38 @@ fn cmd_watch(memory_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Rename the current tmux window if we are running inside a tmux session.
-/// Sets `automatic-rename off` so the name is not overwritten by the child process.
-fn tmux_rename_window(name: &str) {
-    if std::env::var("TMUX").is_err() {
-        return;
+/// Set up the tmux window for an agent subcommand.
+///
+/// - **Inside tmux**: rename the current window to `name` and disable
+///   `automatic-rename` so the child process cannot overwrite it.
+///   Returns `false` (caller should continue normally).
+/// - **Outside tmux**: re-exec the identical command inside a new tmux
+///   session named `name` (with `-A` so it attaches if the session already
+///   exists).  Returns `true` (caller should return immediately — the real
+///   work happens inside the new session).
+fn tmux_setup_window(name: &str) -> bool {
+    if std::env::var("TMUX").is_ok() {
+        // Already inside tmux: lock the window name.
+        let _ = ProcessCommand::new("tmux")
+            .args(["rename-window", name])
+            .status();
+        let _ = ProcessCommand::new("tmux")
+            .args(["set-window-option", "automatic-rename", "off"])
+            .status();
+        return false;
     }
+    // Outside tmux: re-exec the same invocation inside a named session.
+    let args: Vec<String> = std::env::args().collect();
     let _ = ProcessCommand::new("tmux")
-        .args(["rename-window", name])
+        .arg("new-session")
+        .arg("-A") // attach if session already exists
+        .arg("-s")
+        .arg(name)
+        .arg("-n")
+        .arg(name)
+        .args(&args)
         .status();
-    let _ = ProcessCommand::new("tmux")
-        .args(["set-window-option", "automatic-rename", "off"])
-        .status();
+    true
 }
 
 fn cmd_codex(
@@ -2454,7 +2474,7 @@ fn cmd_codex(
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
-    tmux_rename_window("a-codex");
+    if tmux_setup_window("a-codex") { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let codex_bin = std::env::var("AMEM_CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
@@ -2532,7 +2552,7 @@ fn cmd_gemini(
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
-    tmux_rename_window("a-gemini");
+    if tmux_setup_window("a-gemini") { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let gemini_bin = std::env::var("AMEM_GEMINI_BIN").unwrap_or_else(|_| "gemini".to_string());
@@ -2612,7 +2632,7 @@ fn cmd_claude(
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
-    tmux_rename_window("a-claude");
+    if tmux_setup_window("a-claude") { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let claude_bin = resolve_claude_bin();
@@ -3832,17 +3852,38 @@ fn rel_or_abs(memory_dir: &Path, target: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tmux_rename_tests {
+mod tmux_setup_tests {
     use super::*;
 
     #[test]
-    fn tmux_rename_window_noop_outside_tmux() {
-        // TMUX env var not set → function must not panic
+    fn tmux_setup_window_returns_true_outside_tmux() {
+        // Outside tmux: tmux_setup_window tries to launch tmux and returns true.
+        // In CI / test environments tmux may not be running, but the function
+        // must not panic regardless of whether `tmux new-session` succeeds.
         let orig = std::env::var("TMUX").ok();
         unsafe { std::env::remove_var("TMUX") };
-        tmux_rename_window("a-codex"); // should be a no-op
+        let result = tmux_setup_window("a-codex");
+        // Restore before asserting so the env is always cleaned up.
         if let Some(v) = orig {
             unsafe { std::env::set_var("TMUX", v) };
         }
+        // Must return true (re-launch path taken), even if tmux is unavailable.
+        assert!(result);
+    }
+
+    #[test]
+    fn tmux_setup_window_returns_false_inside_tmux() {
+        // Inside tmux: window is renamed and false is returned so the caller
+        // continues normally.  We use a dummy socket path so the rename
+        // command may fail silently, but the function must not panic.
+        let orig = std::env::var("TMUX").ok();
+        unsafe { std::env::set_var("TMUX", "/tmp/tmux-test/dummy,0,0") };
+        let result = tmux_setup_window("a-gemini");
+        if let Some(v) = orig {
+            unsafe { std::env::set_var("TMUX", v) };
+        } else {
+            unsafe { std::env::remove_var("TMUX") };
+        }
+        assert!(!result);
     }
 }
