@@ -539,11 +539,11 @@ fn cmd_keep(
     } else {
         println!("{}", rel_or_abs(memory_dir, &target));
     }
-    notify_discord_via_acomm_for_keep(text);
+    notify_discord_via_acomm_for_keep(text, kind, source);
     Ok(())
 }
 
-fn notify_discord_via_acomm_for_keep(text: &str) {
+fn notify_discord_via_acomm_for_keep(text: &str, kind: &str, source: &str) {
     let text = text.trim();
     if text.is_empty() {
         return;
@@ -558,10 +558,12 @@ fn notify_discord_via_acomm_for_keep(text: &str) {
         return;
     };
 
+    let message = format!("{}\n\n__kind:{} | source:{}__", text, kind, source);
+
     let mut cmd = ProcessCommand::new("acomm");
     cmd.arg("--discord")
         .arg("--agent")
-        .arg(text)
+        .arg(&message)
         .env("DISCORD_BOT_TOKEN", discord_bot_token)
         .env("DISCORD_NOTIFY_CHANNEL_ID", discord_notify_channel_id)
         .stdin(Stdio::null())

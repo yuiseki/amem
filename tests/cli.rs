@@ -188,8 +188,8 @@ printf 'acomm fake stderr\n' >&2
     assert!(ready, "fake acomm log was not created in time");
     let logged = fs::read_to_string(log_path.path()).unwrap();
     assert!(
-        logged.contains("--discord\n--agent\nWent for a walk\n"),
-        "expected fake acomm to receive '--discord --agent <text>', got: {logged}"
+        logged.contains("--discord\n--agent\nWent for a walk\n\n__kind:activity | source:manual__\n"),
+        "expected fake acomm to receive '--discord --agent <text with kind/source suffix>', got: {logged}"
     );
 }
 
@@ -256,8 +256,8 @@ printf 'token=%s\nchannel=%s\n' "$DISCORD_BOT_TOKEN" "$DISCORD_NOTIFY_CHANNEL_ID
 
     let logged_args = fs::read_to_string(args_log_path.path()).unwrap();
     assert!(
-        logged_args.contains("--discord\n--agent\nWent for a walk from env file\n"),
-        "expected fake acomm to receive '--discord --agent <text>', got: {logged_args}"
+        logged_args.contains("--discord\n--agent\nWent for a walk from env file\n\n__kind:activity | source:manual__\n"),
+        "expected fake acomm to receive '--discord --agent <text with kind/source suffix>', got: {logged_args}"
     );
 
     let logged_env = fs::read_to_string(env_log_path.path()).unwrap();
