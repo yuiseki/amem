@@ -121,18 +121,27 @@ pub enum Commands {
         resume_only: bool,
         #[arg(long)]
         prompt: Option<String>,
+        /// Force a new tmux session even if one named a-codex already exists.
+        #[arg(long, default_value_t = false)]
+        new: bool,
     },
     Gemini {
         #[arg(long, default_value_t = false)]
         resume_only: bool,
         #[arg(long)]
         prompt: Option<String>,
+        /// Force a new tmux session even if one named a-gemini already exists.
+        #[arg(long, default_value_t = false)]
+        new: bool,
     },
     Claude {
         #[arg(long, default_value_t = false)]
         resume_only: bool,
         #[arg(long)]
         prompt: Option<String>,
+        /// Force a new tmux session even if one named a-claude already exists.
+        #[arg(long, default_value_t = false)]
+        new: bool,
     },
     Copilot {
         #[arg(long, default_value_t = false)]
@@ -334,15 +343,18 @@ fn run_with(cli: Cli, cwd: &Path) -> Result<()> {
         Some(Commands::Codex {
             resume_only,
             prompt,
-        }) => cmd_codex(&memory_dir, cwd, resume_only, prompt),
+            new,
+        }) => cmd_codex(&memory_dir, cwd, resume_only, prompt, new),
         Some(Commands::Gemini {
             resume_only,
             prompt,
-        }) => cmd_gemini(&memory_dir, cwd, resume_only, prompt),
+            new,
+        }) => cmd_gemini(&memory_dir, cwd, resume_only, prompt, new),
         Some(Commands::Claude {
             resume_only,
             prompt,
-        }) => cmd_claude(&memory_dir, cwd, resume_only, prompt),
+            new,
+        }) => cmd_claude(&memory_dir, cwd, resume_only, prompt, new),
         Some(Commands::Copilot {
             resume_only,
             prompt,
@@ -2439,11 +2451,13 @@ fn cmd_watch(memory_dir: &Path) -> Result<()> {
 /// - **Inside tmux**: rename the current window to `name` and disable
 ///   `automatic-rename` so the child process cannot overwrite it.
 ///   Returns `false` (caller should continue normally).
-/// - **Outside tmux**: re-exec the identical command inside a new tmux
-///   session named `name` (with `-A` so it attaches if the session already
-///   exists).  Returns `true` (caller should return immediately — the real
-///   work happens inside the new session).
-fn tmux_setup_window(name: &str) -> bool {
+/// - **Outside tmux, `force_new = false`** (default): re-exec the identical
+///   command inside a tmux session named `name`.  If the session already
+///   exists, attach to it (`-A`).  Returns `true`.
+/// - **Outside tmux, `force_new = true`** (`--new`): kill any existing
+///   session named `name`, then create a fresh session running this command.
+///   Returns `true`.
+fn tmux_setup_window(name: &str, force_new: bool) -> bool {
     if std::env::var("TMUX").is_ok() {
         // Already inside tmux: lock the window name.
         let _ = ProcessCommand::new("tmux")
@@ -2456,15 +2470,31 @@ fn tmux_setup_window(name: &str) -> bool {
     }
     // Outside tmux: re-exec the same invocation inside a named session.
     let args: Vec<String> = std::env::args().collect();
-    let _ = ProcessCommand::new("tmux")
-        .arg("new-session")
-        .arg("-A") // attach if session already exists
-        .arg("-s")
-        .arg(name)
-        .arg("-n")
-        .arg(name)
-        .args(&args)
-        .status();
+    if force_new {
+        // Kill any existing session so we always get a fresh one.
+        let _ = ProcessCommand::new("tmux")
+            .args(["kill-session", "-t", name])
+            .status();
+        let _ = ProcessCommand::new("tmux")
+            .arg("new-session")
+            .arg("-s")
+            .arg(name)
+            .arg("-n")
+            .arg(name)
+            .args(&args)
+            .status();
+    } else {
+        // Default: attach to existing session or create a new one.
+        let _ = ProcessCommand::new("tmux")
+            .arg("new-session")
+            .arg("-A") // attach if session already exists
+            .arg("-s")
+            .arg(name)
+            .arg("-n")
+            .arg(name)
+            .args(&args)
+            .status();
+    }
     true
 }
 
@@ -2473,8 +2503,9 @@ fn cmd_codex(
     cwd: &Path,
     resume_only: bool,
     prompt: Option<String>,
+    force_new_session: bool,
 ) -> Result<()> {
-    if tmux_setup_window("a-codex") { return Ok(()); }
+    if tmux_setup_window("a-codex", force_new_session) { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let codex_bin = std::env::var("AMEM_CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
@@ -2551,8 +2582,9 @@ fn cmd_gemini(
     cwd: &Path,
     resume_only: bool,
     prompt: Option<String>,
+    force_new_session: bool,
 ) -> Result<()> {
-    if tmux_setup_window("a-gemini") { return Ok(()); }
+    if tmux_setup_window("a-gemini", force_new_session) { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let gemini_bin = std::env::var("AMEM_GEMINI_BIN").unwrap_or_else(|_| "gemini".to_string());
@@ -2631,8 +2663,9 @@ fn cmd_claude(
     cwd: &Path,
     resume_only: bool,
     prompt: Option<String>,
+    force_new_session: bool,
 ) -> Result<()> {
-    if tmux_setup_window("a-claude") { return Ok(()); }
+    if tmux_setup_window("a-claude", force_new_session) { return Ok(()); }
     init_memory_scaffold(memory_dir)?;
 
     let claude_bin = resolve_claude_bin();
@@ -3856,34 +3889,22 @@ mod tmux_setup_tests {
     use super::*;
 
     #[test]
-    fn tmux_setup_window_returns_true_outside_tmux() {
-        // Outside tmux: tmux_setup_window tries to launch tmux and returns true.
-        // In CI / test environments tmux may not be running, but the function
-        // must not panic regardless of whether `tmux new-session` succeeds.
-        let orig = std::env::var("TMUX").ok();
-        unsafe { std::env::remove_var("TMUX") };
-        let result = tmux_setup_window("a-codex");
-        // Restore before asserting so the env is always cleaned up.
-        if let Some(v) = orig {
-            unsafe { std::env::set_var("TMUX", v) };
-        }
-        // Must return true (re-launch path taken), even if tmux is unavailable.
-        assert!(result);
-    }
-
-    #[test]
     fn tmux_setup_window_returns_false_inside_tmux() {
-        // Inside tmux: window is renamed and false is returned so the caller
-        // continues normally.  We use a dummy socket path so the rename
-        // command may fail silently, but the function must not panic.
+        // Inside tmux (TMUX is set): window rename is attempted and false is
+        // returned so the caller continues normally.  A dummy socket path is
+        // used so the rename sub-command may fail silently; the function must
+        // not panic regardless.
         let orig = std::env::var("TMUX").ok();
         unsafe { std::env::set_var("TMUX", "/tmp/tmux-test/dummy,0,0") };
-        let result = tmux_setup_window("a-gemini");
+        let result_default = tmux_setup_window("a-gemini", false);
+        let result_new = tmux_setup_window("a-gemini", true);
         if let Some(v) = orig {
             unsafe { std::env::set_var("TMUX", v) };
         } else {
             unsafe { std::env::remove_var("TMUX") };
         }
-        assert!(!result);
+        // Both force_new=false and force_new=true must return false inside tmux.
+        assert!(!result_default);
+        assert!(!result_new);
     }
 }
