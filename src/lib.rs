@@ -2434,12 +2434,27 @@ fn cmd_watch(memory_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Rename the current tmux window if we are running inside a tmux session.
+/// Sets `automatic-rename off` so the name is not overwritten by the child process.
+fn tmux_rename_window(name: &str) {
+    if std::env::var("TMUX").is_err() {
+        return;
+    }
+    let _ = ProcessCommand::new("tmux")
+        .args(["rename-window", name])
+        .status();
+    let _ = ProcessCommand::new("tmux")
+        .args(["set-window-option", "automatic-rename", "off"])
+        .status();
+}
+
 fn cmd_codex(
     memory_dir: &Path,
     cwd: &Path,
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
+    tmux_rename_window("a-codex");
     init_memory_scaffold(memory_dir)?;
 
     let codex_bin = std::env::var("AMEM_CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
@@ -2517,6 +2532,7 @@ fn cmd_gemini(
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
+    tmux_rename_window("a-gemini");
     init_memory_scaffold(memory_dir)?;
 
     let gemini_bin = std::env::var("AMEM_GEMINI_BIN").unwrap_or_else(|_| "gemini".to_string());
@@ -2596,6 +2612,7 @@ fn cmd_claude(
     resume_only: bool,
     prompt: Option<String>,
 ) -> Result<()> {
+    tmux_rename_window("a-claude");
     init_memory_scaffold(memory_dir)?;
 
     let claude_bin = resolve_claude_bin();
@@ -3812,4 +3829,20 @@ fn rel_or_abs(memory_dir: &Path, target: &Path) -> String {
         .strip_prefix(memory_dir)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| target.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tmux_rename_tests {
+    use super::*;
+
+    #[test]
+    fn tmux_rename_window_noop_outside_tmux() {
+        // TMUX env var not set → function must not panic
+        let orig = std::env::var("TMUX").ok();
+        unsafe { std::env::remove_var("TMUX") };
+        tmux_rename_window("a-codex"); // should be a no-op
+        if let Some(v) = orig {
+            unsafe { std::env::set_var("TMUX", v) };
+        }
+    }
 }
